@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raw HTTP Server - Implementation Notes</title>
+    <style>
+        @media print {
+            .no-print { display: none; }
+            body { background: white; }
+        }
+        
+        body {
+            font-family: Georgia, 'Times New Roman', serif;
+            background: #ffffff;
+            color: #000000;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 60px 40px;
+            line-height: 1.6;
+            font-size: 12pt;
+        }
+        
+        .print-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: #ffffff;
+            border: 2px solid #000000;
+            cursor: pointer;
+            font-family: Georgia, serif;
+            font-size: 14pt;
+        }
+        
+        .print-button:hover {
+            background: #f0f0f0;
+        }
+        
+        h1 {
+            font-size: 28pt;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            page-break-after: avoid;
+        }
+        
+        h2 {
+            font-size: 20pt;
+            margin-top: 40px;
+            margin-bottom: 15px;
+            page-break-after: avoid;
+            border-bottom: 2px solid #000000;
+            padding-bottom: 5px;
+        }
+        
+        h3 {
+            font-size: 16pt;
+            margin-top: 30px;
+            margin-bottom: 10px;
+            page-break-after: avoid;
+        }
+        
+        h4 {
+            font-size: 14pt;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        
+        pre {
+            background: #f8f8f8;
+            border: 1px solid #000000;
+            padding: 15px;
+            overflow-x: auto;
+            page-break-inside: avoid;
+            font-family: 'Courier New', monospace;
+            font-size: 10pt;
+            line-height: 1.4;
+        }
+        
+        code {
+            font-family: 'Courier New', monospace;
+            font-size: 10pt;
+        }
+        
+        .toc {
+            background: #f8f8f8;
+            border: 2px solid #000000;
+            padding: 20px;
+            margin: 30px 0;
+        }
+        
+        .toc ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        
+        .toc li {
+            margin: 8px 0;
+        }
+        
+        .toc a {
+            color: #000000;
+            text-decoration: none;
+        }
+        
+        .toc a:hover {
+            text-decoration: underline;
+        }
+        
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+        
+        li {
+            margin: 8px 0;
+        }
+        
+        p {
+            margin: 15px 0;
+        }
+        
+        .insight-box {
+            border: 2px solid #000000;
+            padding: 15px;
+            margin: 20px 0;
+            page-break-inside: avoid;
+        }
+        
+        .performance-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            page-break-inside: avoid;
+        }
+        
+        .performance-table th,
+        .performance-table td {
+            border: 1px solid #000000;
+            padding: 8px;
+            text-align: left;
+        }
+        
+        .performance-table th {
+            background: #f0f0f0;
+        }
+        
+        @page {
+            margin: 0.75in;
+        }
+        
+        .page-break {
+            page-break-before: always;
+        }
+    </style>
+</head>
+<body>
+    <button class="print-button no-print" onclick="window.print()">🖨️ Print/Save as PDF</button>
+    
+    <h1>Raw HTTP/HTTPS Server from Scratch</h1>
+    <p style="font-size: 14pt;"><strong>Implementation Notes & Technical Deep Dive</strong></p>
+    <p>Author: Uthman Dev | Project: github.com/codetesla51/raw-http</p>
+    
+    <div class="toc">
+        <h2 style="margin-top: 0; border: none;">Table of Contents</h2>
+        <ul>
+            <li><a href="#overview">A. Project Overview</a></li>
+            <li><a href="#concepts">B. Core Concepts & Technologies</a></li>
+            <li><a href="#architecture">C. Code Architecture</a></li>
+            <li><a href="#deepdive">D. Implementation Deep-Dives</a></li>
+            <li><a href="#walkthrough">E. Complete Request Walkthrough</a></li>
+            <li><a href="#tricky">F. The Tricky Parts</a></li>
+            <li><a href="#interview">G. Interview Talking Points</a></li>
+            <li><a href="#glossary">H. Glossary</a></li>
+        </ul>
+    </div>
+
+    <div class="page-break"></div>
+    
+    <h2 id="interview">G. Interview Talking Points</h2>
+    
+    <h3>2-Minute Project Explanation (Elevator Pitch)</h3>
+    <p><em>"I built an HTTP/HTTPS web server from scratch in Go, working directly with TCP sockets instead of using the standard net/http library. The goal was to deeply understand how web servers actually work under the hood - from parsing raw HTTP bytes to managing concurrent connections to implementing TLS encryption.</em></p>
+    
+    <p><em>The server handles request routing, serves static files, processes form data, and supports dynamic template rendering. It uses goroutine-per-connection for concurrency and implements HTTP/1.1 keep-alive for connection reuse.</em></p>
+    
+    <p><em>The most interesting part was the performance optimization journey. I implemented buffer pooling using sync.Pool, which eliminated memory allocation overhead and nearly doubled throughput from 4,000 to 7,700 requests per second. The project taught me a lot about network programming fundamentals, memory optimization, and the tradeoffs between abstraction and performance."</em></p>
+    
+    <h3>Technical Challenges Overcome</h3>
+    
+    <h4>Challenge 1: Buffer Pooling Implementation</h4>
+    <p><strong>Problem:</strong> Initial benchmarks showed the server allocating massive amounts of memory - 56 MB per second at 7,000 RPS. Every request was allocating new buffers for reading/parsing, causing constant garbage collection pressure.</p>
+    
+    <p><strong>Solution:</strong> Implemented three-tier buffer pooling using <code>sync.Pool</code>:</p>
+    <ul>
+        <li>8KB buffers for HTTP request headers</li>
+        <li>256-byte buffers for chunked reading</li>
+        <li>Response buffers using <code>bytes.Buffer</code></li>
+    </ul>
+    
+    <p><strong>Key insight:</strong> Had to carefully manage buffer lifecycles - only returning buffers to the pool if they hadn't grown too large (16KB limit). This prevented memory waste where one huge request would cause all subsequent requests to get oversized buffers.</p>
+    
+    <p><strong>Result:</strong> Throughput increased from 4,000 RPS to 7,721 RPS (+93%). Memory allocations dropped dramatically, reducing GC pressure.</p>
+    
+    <h4>Challenge 2: HTTP Keep-Alive Connection Reuse</h4>
+    <p><strong>Problem:</strong> Initial version was closing connections after each request (<code>Connection: close</code>), forcing clients to establish new TCP connections for every request. This was killing performance.</p>
+    
+    <p><strong>Root cause:</strong> I had initially implemented a limit on requests per connection, closing after 100 requests. This was premature optimization that actually hurt performance.</p>
+    
+    <p><strong>Solution:</strong> Removed the request limit and implemented proper keep-alive:</p>
+    <pre><code>for {  // Keep connection open
+    request, err := readHTTPRequest(conn)
+    if err != nil {
+        return  // Connection closed or error
+    }
+    
+    // Process request...
+    conn.Write([]byte(response))
+    
+    // Only close if client explicitly requests it
+    if headerMap["Connection"] == "close" {
+        break
+    }
+}</code></pre>
+    
+    <p><strong>Result:</strong> Jumped from ~280 RPS to 1,710 RPS (6x improvement). Combined with buffer pooling, achieved 7,721 RPS.</p>
+    
+    <h4>Challenge 3: Chunked Reading Without Over-Reading</h4>
+    <p><strong>Problem:</strong> When reading HTTP requests, you don't know how much data is coming. Reading too much risks consuming part of the body or next request. Reading too little means multiple system calls.</p>
+    
+    <p><strong>Solution:</strong> Read in 256-byte chunks, accumulating into a larger buffer, checking for <code>\r\n\r\n</code> (end of headers) after each chunk. This balances efficiency with correctness.</p>
+    
+    <p><strong>Edge case handled:</strong> The marker can span two chunks (e.g., "\r\n\r" at end of one chunk, "\n" at start of next). By checking the accumulated buffer rather than individual chunks, we handle this correctly.</p>
+    
+    <h4>Challenge 4: Graceful Shutdown Coordination</h4>
+    <p><strong>Problem:</strong> Need to stop accepting new connections while allowing active requests to complete, then cleanly exit.</p>
+    
+    <p><strong>Solution:</strong> Used Go's <code>signal.NotifyContext</code> to create a context that cancels on SIGINT/SIGTERM. Listener goroutines check <code>ctx.Done()</code> and exit when cancelled. Main goroutine waits 2 seconds for active requests to finish.</p>
+    
+    <p><strong>Key learning:</strong> Context propagation is powerful for coordinating shutdown across multiple goroutines without explicit channels or shared state.</p>
+    
+    <h3>Performance Improvements Achieved</h3>
+    
+    <table class="performance-table">
+        <tr>
+            <th>Stage</th>
+            <th>RPS</th>
+            <th>Change Made</th>
+            <th>Impact</th>
+        </tr>
+        <tr>
+            <td>Initial (buggy)</td>
+            <td>250-282</td>
+            <td>Baseline with connection: close</td>
+            <td>-</td>
+        </tr>
+        <tr>
+            <td>Bug fix</td>
+            <td>1,389</td>
+            <td>Fixed request processing bug</td>
+            <td>+5x</td>
+        </tr>
+        <tr>
+            <td>Keep-alive</td>
+            <td>1,710</td>
+            <td>Enabled connection reuse</td>
+            <td>+6x from baseline</td>
+        </tr>
+        <tr>
+            <td>Concurrency tuning</td>
+            <td>4,000</td>
+            <td>Found optimal concurrency level</td>
+            <td>+14x from baseline</td>
+        </tr>
+        <tr>
+            <td>Buffer pooling</td>
+            <td>7,721</td>
+            <td>Implemented sync.Pool</td>
+            <td><strong>+27x from baseline</strong></td>
+        </tr>
+    </table>
+    
+    <p><strong>Final performance (low concurrency, peak throughput):</strong></p>
+    <ul>
+        <li><strong>Peak RPS:</strong> 7,721 requests per second</li>
+        <li><strong>Mean response time:</strong> 0.130ms</li>
+        <li><strong>Failure rate:</strong> 0% across all load tests</li>
+        <li><strong>Connection efficiency:</strong> 100% reuse with keep-alive</li>
+    </ul>
+    
+    <p><strong>Important caveat:</strong> These benchmarks test a simple <code>/ping</code> endpoint that returns "pong". Real-world applications with database queries, business logic, and external API calls would see much lower RPS (typically 100-500). However, the buffer pooling optimization reduces overhead at the networking layer regardless of application complexity.</p>
+    
+    <h3>What I'd Do Differently</h3>
+    
+    <h4>1. Add Middleware System</h4>
+    <p>Currently, cross-cutting concerns (logging, authentication, rate limiting) must be implemented in each handler. A middleware chain would be cleaner:</p>
+    <pre><code>router.Use(loggingMiddleware)
+router.Use(authMiddleware)
+router.Register("GET", "/admin", adminHandler)</code></pre>
+    
+    <h4>2. Implement Path Parameters</h4>
+    <p>Current router only does exact path matching. No support for patterns like <code>/users/:id</code>. Would implement a trie-based router with parameter extraction.</p>
+    
+    <h4>3. Add Request Context</h4>
+    <p>Pass <code>context.Context</code> through request pipeline to support cancellation, timeouts, and request-scoped values:</p>
+    <pre><code>type RouteHandler func(ctx context.Context, req *Request) (response, status string)</code></pre>
+    
+    <h4>4. Better Error Handling</h4>
+    <p>Currently, many errors are logged but not surfaced to handlers. Would implement structured error types and error middleware for consistent error responses.</p>
+    
+    <h4>5. Implement HTTP/2</h4>
+    <p>HTTP/2 multiplexes multiple requests over a single connection with header compression and server push. Would be a significant architectural change but interesting learning experience.</p>
+    
+    <h4>6. Add Rate Limiting</h4>
+    <p>Currently vulnerable to DoS attacks. Would implement token bucket rate limiting per IP address.</p>
+    
+    <h3>Key Learnings from This Project</h3>
+    
+    <h4>1. Abstractions Hide Performance-Critical Details</h4>
+    <p>High-level frameworks are great for productivity, but they make it hard to understand where performance bottlenecks are. Building from TCP up revealed that connection reuse and buffer pooling are critical - lessons that apply even when using frameworks.</p>
+    
+    <h4>2. Memory Allocation is Expensive</h4>
+    <p>Before this project, I didn't appreciate how much overhead memory allocation adds. Buffer pooling nearly doubled throughput by eliminating allocations. This insight applies to any high-performance Go code.</p>
+    
+    <h4>3. HTTP is Simpler Than I Thought</h4>
+    <p>HTTP seemed complex, but at its core it's just text parsing. The protocol is designed to be human-readable: <code>GET /path HTTP/1.1</code>. Most complexity comes from edge cases and extensions (chunked encoding, multipart forms, etc.).</p>
+    
+    <h4>4. Concurrency is About Coordination, Not Just Speed</h4>
+    <p>Go makes it easy to spawn goroutines, but the hard part is coordinating them - especially during shutdown. Learning to use contexts for cancellation propagation was valuable.</p>
+    
+    <h4>5. Security Requires Defensive Programming</h4>
+    <p>Implementing path traversal protection (<code>filepath.Clean</code>), request size limits, and timeouts taught me that security must be designed in from the start. Every input is potentially malicious.</p>
+    
+    <h3>Most Interesting Technical Problem Solved</h3>
+    
+    <p><strong>Problem:</strong> How to implement buffer pooling correctly with <code>sync.Pool</code> while handling edge cases.</p>
+    
+    <p><strong>Why it's interesting:</strong> Buffer pooling is a classic space-time tradeoff. You save time by reusing buffers, but must carefully manage buffer sizes to avoid wasting space.</p>
+    
+    <p><strong>Key decisions:</strong></p>
+    <ol>
+        <li><strong>Multiple pool sizes:</strong> 8KB for headers, 256 bytes for chunks, variable for responses. Each optimized for its use case.</li>
+        
+        <li><strong>Growth limit:</strong> Don't return buffers larger than 16KB to the pool. This prevents one huge request from polluting the pool with oversized buffers.</li>
+        
+        <li><strong>Zero-length reset:</strong> Reset buffers to <code>[:0]</code> (zero length, preserved capacity) rather than creating new slices. This ensures old data doesn't leak while avoiding reallocation.</li>
+        
+        <li><strong>Deferred return:</strong> Use <code>defer</code> to ensure buffers are always returned to pool, even if errors occur:
+        <pre><code>defer func() {
+    if cap(buffer) <= 16384 {
+        requestBufferPool.Put(bufPtr)
+    }
+}()</code></pre>
+        </li>
+    </ol>
+    
+    <p><strong>Result:</strong> +93% performance improvement from a relatively simple optimization. This taught me that in systems programming, understanding memory management deeply can yield outsized returns.</p>
+
+    <div class="page-break"></div>
+    
+    <h2 id="glossary">H. Glossary</h2>
+    
+    <h3>A</h3>
+    
+    <p><strong>Artifact:</strong> In this context, the compiled binary executable of the server program.</p>
+    
+    <h3>B</h3>
+    
+    <p><strong>Buffer:</strong> A region of memory used to temporarily store data being transferred. Think of it as a bucket that holds data while it's being processed.</p>
+    
+    <p><strong>Buffer Pooling:</strong> A technique where buffers are reused instead of allocated fresh for each operation. Reduces memory allocation overhead and garbage collection pressure.</p>
+    
+    <p><strong>bytes.Buffer:</strong> A Go standard library type that implements an efficient growable buffer of bytes. Better than string concatenation for building strings incrementally.</p>
+    
+    <h3>C</h3>
+    
+    <p><strong>Certificate (TLS/SSL):</strong> A digital document that proves a server's identity. Contains the server's public key and is signed by a trusted Certificate Authority (or self-signed for testing).</p>
+    
+    <p><strong>Chunked Reading:</strong> Reading data in small pieces (chunks) rather than all at once. Useful when you don't know how much data is coming.</p>
+    
+    <p><strong>Concurrency:</strong> Multiple tasks making progress simultaneously. In Go, this is achieved through goroutines (lightweight threads) that can run in parallel or be interleaved on a single CPU.</p>
+    
+    <p><strong>Connection:</strong> A communication channel between client and server. In TCP, this is a bidirectional stream of bytes established through a three-way handshake.</p>
+    
+    <p><strong>Content-Length:</strong> An HTTP header that specifies the size of the request or response body in bytes. Crucial for HTTP/1.1 keep-alive to know when a message ends.</p>
+    
+    <p><strong>Content-Type:</strong> An HTTP header that tells the recipient what type of data is in the body (e.g., text/html, application/json, image/png).</p>
+    
+    <p><strong>Context (Go):</strong> A way to pass cancellation signals, deadlines, and request-scoped values across API boundaries. Used for graceful shutdown in this project.</p>
+    
+    <h3>D</h3>
+    
+    <p><strong>Defer:</strong> A Go keyword that schedules a function call to execute when the surrounding function returns. Commonly used for cleanup (closing files, returning pooled resources).</p>
+    
+    <p><strong>DoS (Denial of Service):</strong> An attack that makes a service unavailable by overwhelming it with requests or consuming its resources.</p>
+    
+    <h3>G</h3>
+    
+    <p><strong>Garbage Collection (GC):</strong> Automatic memory management that reclaims memory occupied by objects no longer in use. In Go, the GC runs concurrently with your program. Frequent allocations increase GC pressure.</p>
+    
+    <p><strong>Goroutine:</strong> A lightweight thread managed by the Go runtime. Goroutines are much cheaper than OS threads (start with 2KB stack vs 1-2MB for threads). You can easily run thousands or millions of goroutines.</p>
+    
+    <p><strong>Graceful Shutdown:</strong> Stopping a server in a controlled way - stop accepting new connections, let active requests complete, clean up resources, then exit.</p>
+    
+    <h3>H</h3>
+    
+    <p><strong>Handler:</strong> A function that processes an HTTP request and generates a response. In this project: <code>func(req *Request) (response, status string)</code></p>
+    
+    <p><strong>HTTP (Hypertext Transfer Protocol):</strong> The application-layer protocol used for transmitting web pages, APIs, and other resources. It's text-based and human-readable.</p>
+    
+    <p><strong>HTTPS:</strong> HTTP over TLS/SSL. All communication is encrypted, preventing eavesdropping and tampering.</p>
+    
+    <p><strong>HTTP/1.1:</strong> Version of HTTP that introduced persistent connections (keep-alive), chunked transfer encoding, and better caching. Most widely used version until HTTP/2.</p>
+    
+    <h3>K</h3>
+    
+    <p><strong>Keep-Alive:</strong> HTTP/1.1 feature that keeps TCP connections open after a request completes, allowing multiple requests to reuse the same connection. Dramatically improves performance by avoiding TCP handshake overhead.</p>
+    
+    <h3>M</h3>
+    
+    <p><strong>MIME Type:</strong> Multipurpose Internet Mail Extensions type. A standard way of indicating the nature and format of a file. Examples: <code>text/html</code>, <code>image/png</code>, <code>application/json</code>.</p>
+    
+    <p><strong>Middleware:</strong> Functions that process requests before they reach handlers. Used for cross-cutting concerns like logging, authentication, rate limiting.</p>
+    
+    <h3>N</h3>
+    
+    <p><strong>net.Conn:</strong> Go's interface for network connections. Provides <code>Read()</code>, <code>Write()</code>, and <code>Close()</code> methods that work over TCP, UDP, Unix sockets, etc.</p>
+    
+    <p><strong>net.Listen:</strong> Go function that creates a TCP listener that accepts incoming connections on a specified address/port.</p>
+    
+    <h3>P</h3>
+    
+    <p><strong>Path Traversal:</strong> A security vulnerability where an attacker uses special characters (like <code>../</code>) to access files outside the intended directory. Example: <code>GET /../../../etc/passwd</code></p>
+    
+    <p><strong>Port:</strong> A number (0-65535) that identifies a specific process on a machine. HTTP uses port 80, HTTPS uses port 443. This project uses 8080 (HTTP) and 8443 (HTTPS).</p>
+    
+    <h3>R</h3>
+    
+    <p><strong>Race Condition:</strong> A bug that occurs when multiple threads access shared data concurrently and at least one modifies it, without proper synchronization.</p>
+    
+    <p><strong>Request:</strong> A message sent by a client asking a server to perform an action. Contains method (GET, POST), path (/index.html), headers, and optional body.</p>
+    
+    <p><strong>Response:</strong> A message sent by a server in reply to a request. Contains status code (200, 404), headers, and optional body.</p>
+    
+    <p><strong>Router:</strong> Component that maps incoming requests to handler functions based on method and path.</p>
+    
+    <p><strong>RPS (Requests Per Second):</strong> A measure of server throughput - how many requests can be processed per second.</p>
+    
+    <h3>S</h3>
+    
+    <p><strong>SIGINT:</strong> Signal sent to a process when Ctrl+C is pressed. Used to request graceful shutdown.</p>
+    
+    <p><strong>SIGTERM:</strong> Signal sent to a process to request termination (e.g., by <code>kill</code> command). Should trigger graceful shutdown.</p>
+    
+    <p><strong>Socket:</strong> An endpoint for network communication. A TCP socket represents one end of a connection - you read from it and write to it to communicate with the other end.</p>
+    
+    <p><strong>sync.Mutex:</strong> Mutual exclusion lock. Ensures only one goroutine can access a shared resource at a time. Used to prevent race conditions.</p>
+    
+    <p><strong>sync.Pool:</strong> A set of temporary objects that may be individually saved and retrieved. Used for object pooling to reduce allocation overhead. Not a cache (objects can be GC'd).</p>
+    
+    <p><strong>sync.RWMutex:</strong> Reader/writer lock. Multiple goroutines can hold read locks simultaneously, but write locks are exclusive.</p>
+    
+    <h3>T</h3>
+    
+    <p><strong>TCP (Transmission Control Protocol):</strong> A reliable, connection-oriented transport protocol. Provides in-order delivery, error correction, and flow control. HTTP runs on top of TCP.</p>
+    
+    <p><strong>TCP Handshake:</strong> The three-way process to establish a TCP connection (SYN, SYN-ACK, ACK). Takes 1-3 round-trip times depending on latency.</p>
+    
+    <p><strong>Template:</strong> An HTML file with placeholders that get filled in with dynamic data. Go's <code>html/template</code> package provides this functionality.</p>
+    
+    <p><strong>TLS (Transport Layer Security):</strong> Cryptographic protocol that provides encryption and authentication for network communications. Successor to SSL. Used for HTTPS.</p>
+    
+    <p><strong>Throughput:</strong> The amount of work a system can handle in a given time period. For web servers, measured in requests per second (RPS).</p>
+    
+    <h3>U</h3>
+    
+    <p><strong>URL (Uniform Resource Locator):</strong> A web address like <code>http://localhost:8080/index.html?page=1</code>. Contains scheme (http), host (localhost), port (8080), path (/index.html), and optional query parameters (?page=1).</p>
+    
+    <p><strong>User-Agent:</strong> HTTP header that identifies the client software making the request. Example: "Mozilla/5.0 (Chrome/91.0)". Used for browser detection.</p>
+    
+    <h3>Additional Concepts</h3>
+    
+    <p><strong>Blocking I/O:</strong> Operations like <code>conn.Read()</code> that pause (block) the current goroutine until data is available or an error occurs. While one goroutine is blocked, others can run.</p>
+    
+    <p><strong>Escape Analysis:</strong> Go compiler technique that determines whether a variable can be allocated on the stack (fast) or must be allocated on the heap (slower, requires GC). Pooling helps even heap-allocated objects.</p>
+    
+    <p><strong>Heap:</strong> The memory region where dynamically allocated objects live. Managed by the garbage collector.</p>
+    
+    <p><strong>Stack:</strong> The memory region for function call frames and local variables. Very fast to allocate/deallocate (just move a pointer). Each goroutine has its own stack.</p>
+    
+    <p><strong>Slice:</strong> Go's dynamic array type. Has three components: pointer to underlying array, length (number of elements), and capacity (size of underlying array). Slicing operations like <code>[:0]</code> manipulate these values without allocating new memory.</p>
+
+    <div class="page-break"></div>
+    
+    <h2>Final Thoughts</h2>
+    
+    <p>This HTTP server project represents a journey from "HTTP works somehow" to a deep, practical understanding of web server internals. The progression from a buggy 250 RPS prototype to a highly optimized 7,700 RPS server demonstrates how low-level implementation details—buffer pooling, connection reuse, chunked reading—can have dramatic performance impacts.</p>
+    
+    <p>The most valuable lesson isn't just the 27x performance improvement, but understanding <em>why</em> each optimization mattered. These insights apply beyond this specific project: memory allocation overhead affects all high-performance systems, connection reuse principles apply to database connection pools, and the concurrency patterns used here (goroutine-per-connection, context-based shutdown) are foundational Go idioms.</p>
+    
+    <p>While this is an educational project not intended for production use, it provides a solid foundation for understanding real-world web servers, optimizing performance, and making informed architectural decisions when building scalable systems.</p>
+    
+    <div style="text-align: center; margin-top: 60px; padding-top: 20px; border-top: 2px solid #000;">
+        <p><strong>End of Implementation Notes</strong></p>
+        <p>Raw HTTP Server - github.com/codetesla51/raw-http</p>
+        <p>Author: Uthman Dev</p>
+    </div>
+
+</body>
+</html>id="overview">A. Project Overview</h2>
+    
+    <h3>What This Project Does</h3>
+    <p>This is an HTTP/HTTPS web server built directly on top of TCP sockets without using Go's standard <code>net/http</code> package. It manually parses HTTP requests, handles routing, serves static files, and supports dynamic template rendering.</p>
+    
+    <p>Think of it as building a car from scratch instead of buying one from a dealership. You understand every bolt and wire because you put them there yourself.</p>
+    
+    <h3>The Main Problem It Solves</h3>
+    <p>This is primarily an <strong>educational project</strong> designed to answer the question: <em>"How do web servers actually work under the hood?"</em></p>
+    
+    <p>Most developers use high-level frameworks (Express.js, Flask, Spring Boot) that hide the complexity. This project strips away all abstractions to reveal:</p>
+    <ul>
+        <li>How HTTP requests are parsed byte-by-byte</li>
+        <li>How TCP connections are managed</li>
+        <li>How keep-alive connections work</li>
+        <li>How memory pooling optimizes performance</li>
+        <li>How TLS/SSL encryption is implemented</li>
+    </ul>
+    
+    <h3>High-Level Architecture</h3>
+    <p>The server follows a classic concurrent server pattern:</p>
+    
+    <pre><code>1. Create TCP Listener (port 8080 for HTTP, 8443 for HTTPS)
+2. Accept incoming connections in a loop
+3. Spawn a goroutine for each connection
+4. Inside each goroutine:
+   a. Read raw bytes from socket
+   b. Parse HTTP request manually
+   c. Route to appropriate handler
+   d. Generate HTTP response
+   e. Write response back to socket
+   f. Keep connection alive for next request (HTTP/1.1 keep-alive)
+5. Gracefully shutdown on SIGINT/SIGTERM</code></pre>
+    
+    <div class="insight-box">
+        <h4>Key Architectural Decision: Goroutine-Per-Connection</h4>
+        <p>The server uses Go's goroutine-per-connection model. Each incoming connection gets its own lightweight thread (goroutine). This is different from:</p>
+        <ul>
+            <li><strong>Thread-per-connection</strong> (expensive, limited by OS threads)</li>
+            <li><strong>Event loop</strong> (Node.js style, single-threaded with callbacks)</li>
+        </ul>
+        <p>Go's goroutines are cheap (2KB stack initially) and scheduled efficiently by the Go runtime, making this approach practical for thousands of concurrent connections.</p>
+    </div>
+
+    <div class="page-break"></div>
+    
+    <h2 id="concepts">B. Core Concepts & Technologies</h2>
+    
+    <h3>1. TCP Sockets</h3>
+    <p><strong>What it is:</strong> A TCP socket is an endpoint for sending and receiving data over a network. It's like a phone line - you establish a connection, send data back and forth, then close it.</p>
+    
+    <p><strong>Why it's needed:</strong> HTTP runs on top of TCP. To build an HTTP server from scratch, you need to work at the TCP level - listening for connections, reading bytes, writing bytes.</p>
+    
+    <p><strong>How it's used in this project:</strong></p>
+    <pre><code>// Create a TCP listener on port 8080
+listener, err := net.Listen("tcp", ":8080")
+
+// Accept incoming connections
+conn, err := listener.Accept()
+
+// Read data from connection
+buffer := make([]byte, 1024)
+n, err := conn.Read(buffer)
+
+// Write data to connection
+conn.Write([]byte("HTTP/1.1 200 OK\r\n..."))</code></pre>
+    
+    <h3>2. sync.Pool - Object Pooling</h3>
+    <p><strong>What it is:</strong> <code>sync.Pool</code> is a Go standard library feature that maintains a pool of reusable objects. Instead of allocating new objects for every operation, you "borrow" one from the pool, use it, then return it.</p>
+    
+    <p><strong>Why it's needed:</strong> Memory allocation is expensive. Every time you create a new byte slice, Go's runtime must:</p>
+    <ol>
+        <li>Find space in heap memory</li>
+        <li>Zero out the memory (security)</li>
+        <li>Eventually garbage collect it when done</li>
+    </ol>
+    
+    <p>This overhead adds up when handling thousands of requests per second. Buffer pooling eliminates most allocations.</p>
+    
+    <p><strong>How it's used in this project:</strong></p>
+    <pre><code>// Create a pool that knows how to make new 8KB buffers
+var requestBufferPool = sync.Pool{
+    New: func() interface{} {
+        buf := make([]byte, 8192)  // 8KB buffer
+        return buf                   // Return pointer to buffer
+    },
+}
+
+// Get a buffer from the pool
+bufPtr := requestBufferPool.Get().(*[]byte)
+buffer := (*bufPtr)[:0]  // Reset to zero length, keep capacity
+
+// Use the buffer...
+buffer = append(buffer, readData...)
+
+// Return it to pool when done
+if cap(buffer) <= 16384 {  // Don't pool if it grew too large
+    requestBufferPool.Put(bufPtr)
+}</code></pre>
+    
+    <div class="insight-box">
+        <h4>Performance Impact of Buffer Pooling</h4>
+        <p><strong>Before pooling:</strong> 4,000 RPS (requests per second)</p>
+        <p><strong>After pooling:</strong> 7,721 RPS</p>
+        <p><strong>Improvement:</strong> +93% (nearly doubled!)</p>
+        <p>This is because pooling eliminates the overhead of constantly allocating and garbage collecting byte slices for every request.</p>
+    </div>
+    
+    <h3>3. Goroutines and Concurrency</h3>
+    <p><strong>What they are:</strong> Goroutines are lightweight threads managed by the Go runtime. They enable concurrent execution - multiple things happening at the same time.</p>
+    
+    <p><strong>Why they're needed:</strong> A web server must handle multiple clients simultaneously. If you processed requests one-by-one, only one person could use your website at a time!</p>
+    
+    <p><strong>How they're used in this project:</strong></p>
+    <pre><code>// Main listener loop (HTTP)
+go func() {
+    for {
+        conn, err := listener.Accept()  // Wait for connection
+        if err != nil {
+            return
+        }
+        go router.RunConnection(conn)  // Handle in new goroutine
+    }
+}()
+
+// HTTPS listener runs concurrently
+go func() {
+    for {
+        conn, err := tlsListener.Accept()
+        if err != nil {
+            return
+        }
+        go router.RunConnection(conn)
+    }
+}()</code></pre>
+    
+    <p>The <code>go</code> keyword spawns a new goroutine. Each connection gets its own, allowing the server to handle thousands of clients concurrently.</p>
+    
+    <h3>4. HTTP Protocol Parsing</h3>
+    <p><strong>What it is:</strong> HTTP is a text-based protocol. A request looks like this:</p>
+    <pre><code>GET /index.html HTTP/1.1\r\n
+Host: localhost:8080\r\n
+User-Agent: Mozilla/5.0\r\n
+\r\n</code></pre>
+    
+    <p>The server must parse this text to understand what the client wants.</p>
+    
+    <p><strong>Why manual parsing:</strong> Standard libraries like <code>net/http</code> hide this complexity. By parsing manually, you learn exactly how HTTP works.</p>
+    
+    <p><strong>How it's done in this project:</strong></p>
+    <pre><code>// Read until we find \r\n\r\n (end of headers)
+func readHTTPRequest(conn net.Conn) (string, error) {
+    headerBuffer := make([]byte, 0, 8192)
+    
+    for {
+        chunk := make([]byte, 256)
+        n, err := conn.Read(chunk)
+        headerBuffer = append(headerBuffer, chunk[:n]...)
+        
+        // Check if we've read the complete headers
+        if strings.Contains(string(headerBuffer), "\r\n\r\n") {
+            break
+        }
+    }
+    
+    return string(headerBuffer), nil
+}
+
+// Parse the request line: "GET /index.html HTTP/1.1"
+func parseRequestLine(firstLine string) (method, path string, err error) {
+    parts := strings.Split(firstLine, " ")
+    return parts[0], parts[1], nil  // method, path
+}</code></pre>
+    
+    <h3>5. HTTP Keep-Alive Connections</h3>
+    <p><strong>What it is:</strong> Instead of closing the connection after each response, HTTP/1.1 keeps it open so the client can send multiple requests over the same TCP connection.</p>
+    
+    <p><strong>Why it matters:</strong> Opening a TCP connection is expensive (TCP handshake takes 3 network round-trips). Reusing connections is much faster.</p>
+    
+    <p><strong>Performance impact in this project:</strong></p>
+    <ul>
+        <li><strong>Without keep-alive:</strong> ~280 RPS</li>
+        <li><strong>With keep-alive:</strong> ~1,710 RPS</li>
+        <li><strong>Improvement:</strong> 6x faster!</li>
+    </ul>
+    
+    <p><strong>How it's implemented:</strong></p>
+    <pre><code>func (r *Router) RunConnection(conn net.Conn) {
+    defer conn.Close()
+
+    for {  // Keep reading requests from same connection
+        request, err := readHTTPRequest(conn)
+        if err != nil {
+            return  // Connection closed or error
+        }
+        
+        // Process request, generate response...
+        response := handleRequest(request)
+        conn.Write([]byte(response))
+        
+        // Check if client wants to close connection
+        if headerMap["Connection"] == "close" {
+            break  // Exit loop, close connection
+        }
+        // Otherwise, loop back and wait for next request
+    }
+}</code></pre>
+    
+    <h3>6. TLS/SSL Encryption (HTTPS)</h3>
+    <p><strong>What it is:</strong> TLS (Transport Layer Security) encrypts data between client and server. HTTPS is just HTTP over TLS.</p>
+    
+    <p><strong>Why it's needed:</strong> Without encryption, anyone on the network can read your HTTP requests/responses (passwords, cookies, etc.).</p>
+    
+    <p><strong>How it's implemented:</strong></p>
+    <pre><code>// Load certificate and private key
+cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+
+// Create TLS configuration
+config := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+}
+
+// Create TLS listener (wraps TCP listener)
+tlsListener, err := tls.Listen("tcp", ":8443", config)
+
+// Everything else is the same - TLS handles encryption/decryption
+conn, err := tlsListener.Accept()
+go router.RunConnection(conn)  // Same handler as HTTP!</code></pre>
+    
+    <p>The beauty is that once TLS is set up, your HTTP parsing code doesn't change. The <code>conn.Read()</code> and <code>conn.Write()</code> calls automatically handle encryption/decryption.</p>
+    
+    <h3>7. Context-Based Graceful Shutdown</h3>
+    <p><strong>What it is:</strong> A way to cleanly shut down the server when receiving SIGINT (Ctrl+C) or SIGTERM signals.</p>
+    
+    <p><strong>Why it's needed:</strong> Without graceful shutdown, active requests get abruptly terminated, potentially causing data corruption or incomplete transactions.</p>
+    
+    <p><strong>How it works:</strong></p>
+    <pre><code>// Create context that cancels on interrupt signal
+ctx, stop := signal.NotifyContext(
+    context.Background(), 
+    os.Interrupt,      // Ctrl+C
+    syscall.SIGTERM    // Kill signal
+)
+defer stop()
+
+// Listeners check if context is done
+go func() {
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            select {
+            case <-ctx.Done():  // Context cancelled?
+                return          // Stop accepting connections
+            default:
+                log.Println("Error:", err)
+                continue
+            }
+        }
+        go router.RunConnection(conn)
+    }
+}()
+
+// Main goroutine waits for signal
+<-ctx.Done()
+log.Println("Shutting down...")
+listener.Close()  // Close listeners
+time.Sleep(2 * time.Second)  // Grace period
+log.Println("Server stopped.")</code></pre>
+
+    <div class="page-break"></div>
+    
+    <h2 id="architecture">C. Code Architecture</h2>
+    
+    <h3>Project Structure</h3>
+    <pre><code>raw-http/
+├── main.go              # Application entry point
+├── server/
+│   ├── server.go        # Core HTTP server logic
+│   └── server_test.go   # Test suite
+├── pages/               # Static files & templates
+│   ├── index.html
+│   ├── welcome.html
+│   ├── login.html
+│   ├── 404.html
+│   └── styles.css
+├── server.crt           # TLS certificate
+├── server.key           # TLS private key
+├── go.mod               # Go module definition
+└── README.md            # Documentation</code></pre>
+    
+    <h3>Main Entry Point (main.go)</h3>
+    <p>The <code>main()</code> function orchestrates the entire server setup:</p>
+    
+    <pre><code>func main() {
+    // 1. Setup graceful shutdown
+    ctx, stop := signal.NotifyContext(context.Background(), 
+        os.Interrupt, syscall.SIGTERM)
+    defer stop()
+
+    // 2. Create HTTP listener (with port fallback)
+    port := 8080
+    for {
+        listener, err = net.Listen("tcp", ":"+strconv.Itoa(port))
+        if err == nil {
+            break  // Successfully bound to port
+        }
+        port++  // Try next port
+    }
+    
+    // 3. Setup HTTPS listener (if certificates exist)
+    if fileExists("server.crt") && fileExists("server.key") {
+        cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+        config := &tls.Config{Certificates: []tls.Certificate{cert}}
+        tlsListener, err = tls.Listen("tcp", ":8443", config)
+    }
+    
+    // 4. Create router and register routes
+    router := server.NewRouter()
+    router.Register("GET", "/welcome", homeHandler)
+    router.Register("GET", "/hello", handleHello)
+    router.Register("POST", "/login", loginHandler)
+    router.Register("GET", "/ping", func(req *server.Request) (string, string) {
+        return server.CreateResponse("200", "text/plain", "OK", "pong")
+    })
+    
+    // 5. Start HTTP listener goroutine
+    go func() {
+        for {
+            conn, err := listener.Accept()
+            if err != nil {
+                select {
+                case <-ctx.Done():
+                    return
+                default:
+                    continue
+                }
+            }
+            go router.RunConnection(conn)
+        }
+    }()
+    
+    // 6. Start HTTPS listener goroutine (if TLS enabled)
+    if hasTLS {
+        go func() {
+            // Same as HTTP listener
+        }()
+    }
+    
+    // 7. Wait for shutdown signal
+    <-ctx.Done()
+    log.Println("Shutting down...")
+    listener.Close()
+    time.Sleep(2 * time.Second)  // Grace period
+}</code></pre>
+    
+    <h3>Key Data Structures</h3>
+    
+    <h4>1. Request Struct</h4>
+    <pre><code>type Request struct {
+    Query   map[string]string  // URL query parameters (?key=value)
+    Body    map[string]string  // Form data or JSON body
+    Browser string             // "Chrome", "Firefox", etc.
+    Method  string             // "GET", "POST", etc.
+    Path    string             // "/index.html"
+}</code></pre>
+    
+    <p><strong>Why this structure:</strong> It provides a clean abstraction for handlers. They don't need to parse HTTP - they just access <code>req.Body["username"]</code>.</p>
+    
+    <h4>2. Router Struct</h4>
+    <pre><code>type Router struct {
+    routes map[string]map[string]RouteHandler
+    // Outer map: HTTP method (GET, POST)
+    // Inner map: path -> handler function
+}
+
+type RouteHandler func(req *Request) (response, status string)</code></pre>
+    
+    <p><strong>Why this structure:</strong> It enables fast O(1) lookup of handlers. Given "POST /login", the router does:</p>
+    <pre><code>handler := router.routes["POST"]["/login"]</code></pre>
+    
+    <h3>Program Flow Diagram</h3>
+    <pre><code>Client Request
+    ↓
+TCP Connection Established
+    ↓
+listener.Accept() ← returns net.Conn
+    ↓
+go router.RunConnection(conn)  ← spawns goroutine
+    ↓
+readHTTPRequest(conn) ← reads raw bytes
+    ↓
+Parse request line → method, path
+Parse headers → headerMap
+Parse body → bodyMap
+    ↓
+router.Handle(method, path, ...) ← find handler
+    ↓
+Execute handler function
+    ↓
+CreateResponse(status, contentType, body)
+    ↓
+conn.Write(response) ← send bytes back
+    ↓
+Loop back if Connection: keep-alive
+    ↓
+conn.Close() when done</code></pre>
+
+    <div class="page-break"></div>
+    
+    <h2 id="deepdive">D. Implementation Deep-Dives</h2>
+    
+    <h3>Feature 1: Buffer Pooling System</h3>
+    
+    <h4>What it does</h4>
+    <p>Reuses byte slices (buffers) instead of allocating new ones for every request, dramatically reducing memory allocation overhead.</p>
+    
+    <h4>Why it exists</h4>
+    <p>Originally, the server created new buffers for each request:</p>
+    <pre><code>// Old approach (allocates every time)
+buffer := make([]byte, 8192)  // Allocates 8KB
+// Use buffer...
+// Buffer becomes garbage, eventually collected</code></pre>
+    
+    <p>At 7,000 requests per second, this means:</p>
+    <ul>
+        <li>7,000 allocations per second</li>
+        <li>56 MB of memory allocated per second</li>
+        <li>Constant garbage collection pressure</li>
+    </ul>
+    
+    <p>Buffer pooling eliminates most of these allocations by reusing buffers.</p>
+    
+    <h4>How it works</h4>
+    <p><strong>Step 1:</strong> Create three pools for different buffer sizes:</p>
+    <pre><code>// Large buffers for reading HTTP requests (8KB)
+var requestBufferPool = sync.Pool{
+    New: func() interface{} {
+        buf := make([]byte, 8192)
+        return buf  // Returns pointer to slice
+    },
+}
+
+// Small buffers for chunked reading (256 bytes)
+var chunkBufferPool = sync.Pool{
+    New: func() interface{} {
+        buf := make([]byte, 256)
+        return buf
+    },
+}
+
+// Response buffers (grows as needed)
+var responseBufferPool = sync.Pool{
+    New: func() interface{} {
+        return new(bytes.Buffer)
+    },
+}</code></pre>
+    
+    <p><strong>Step 2:</strong> Borrow buffer from pool:</p>
+    <pre><code>// Get pointer to buffer from pool
+bufPtr := requestBufferPool.Get().(*[]byte)
+
+// Reset buffer to zero length (keep capacity)
+headerBuffer := (*bufPtr)[:0]</code></pre>
+    
+    <p><strong>Step 3:</strong> Use the buffer:</p>
+    <pre><code>// Append data as we read from connection
+for {
+    chunkPtr := chunkBufferPool.Get().(*[]byte)
+    chunk := *chunkPtr
+    
+    n, err := conn.Read(chunk)
+    headerBuffer = append(headerBuffer, chunk[:n]...)
+    
+    chunkBufferPool.Put(chunkPtr)  // Return chunk buffer immediately
+    
+    if foundEndOfHeaders {
+        break
+    }
+}</code></pre>
+    
+    <p><strong>Step 4:</strong> Return buffer to pool:</p>
+    <pre><code>defer func() {
+    // Only return if buffer didn't grow too large
+    if cap(headerBuffer) <= 16384 {  // 16KB limit
+        requestBufferPool.Put(bufPtr)
+    }
+    // If it grew beyond 16KB, let it be garbage collected
+}()</code></pre>
+    
+    <h4>Key Insights</h4>
+    <div class="insight-box">
+        <p><strong>Why check buffer capacity before returning?</strong></p>
+        <p>If a buffer grows too large (rare cases like huge headers), returning it to the pool would waste memory. Subsequent requests would get this oversized buffer even though they only need 8KB. Better to let Go's garbage collector reclaim it.</p>
+        
+        <p><strong>Why reset to zero length but keep capacity?</strong></p>
+        <p>The slice <code>(*bufPtr)[:0]</code> sets length to 0 but preserves the underlying 8KB array. This means <code>append()</code> will reuse the existing memory instead of allocating new space.</p>
+        
+        <p><strong>Thread safety:</strong></p>
+        <p><code>sync.Pool</code> is automatically thread-safe. Multiple goroutines can call <code>Get()</code> and <code>Put()</code> concurrently without races.</p>
+    </div>
+    
+    <h3>Feature 2: HTTP Request Parsing</h3>
+    
+    <h4>What it does</h4>
+    <p>Reads raw bytes from a TCP connection and converts them into a structured <code>Request</code> object.</p>
+    
+    <h4>Why it exists</h4>
+    <p>TCP gives you a stream of bytes. HTTP is a text protocol with structure. The parser bridges this gap.</p>
+    
+    <h4>How it works</h4>
+    <p><strong>Step 1:</strong> Read until we find the end of headers (<code>\r\n\r\n</code>):</p>
+    <pre><code>func readHTTPRequest(conn net.Conn) (string, error) {
+    // Get buffer from pool
+    bufPtr := requestBufferPool.Get().(*[]byte)
+    headerBuffer := (*bufPtr)[:0]
+    
+    defer func() {
+        if cap(headerBuffer) <= 16384 {
+            requestBufferPool.Put(bufPtr)
+        }
+    }()
+
+    maxHeaderSize := 8192  // Limit to prevent DoS
+    timeout := time.Now().Add(10 * time.Second)
+
+    for {
+        conn.SetReadDeadline(timeout)  // Don't wait forever
+        
+        if len(headerBuffer) > maxHeaderSize {
+            return "", errors.New("headers too large")
+        }
+        
+        // Read a chunk
+        chunkPtr := chunkBufferPool.Get().(*[]byte)
+        chunk := *chunkPtr
+        
+        n, err := conn.Read(chunk)
+        if err != nil {
+            chunkBufferPool.Put(chunkPtr)
+            return "", err
+        }
+        
+        headerBuffer = append(headerBuffer, chunk[:n]...)
+        chunkBufferPool.Put(chunkPtr)
+
+        // Check for end of headers
+        if strings.Contains(string(headerBuffer), "\r\n\r\n") {
+            break
+        }
+    }
+
+    return string(headerBuffer), nil
+}</code></pre>
+    
+    <p><strong>Step 2:</strong> Split headers and body:</p>
+    <pre><code>request, err := readHTTPRequest(conn)
+
+// Split on \r\n\r\n (empty line separates headers from body)
+requestParts := strings.SplitN(request, "\r\n\r\n", 2)
+headerSection := requestParts[0]  // Everything before empty line
+body := ""
+if len(requestParts) > 1 {
+    body = requestParts[1]  // Everything after empty line
+}</code></pre>
+    
+    <p><strong>Step 3:</strong> Parse the request line:</p>
+    <pre><code>// Request line format: "GET /index.html HTTP/1.1"
+func parseRequestLine(firstLine string) (method, path string, err error) {
+    parts := strings.Split(firstLine, " ")
+    if len(parts) < 3 {
+        return "", "", errors.New("invalid request line")
+    }
+    return parts[0], parts[1], nil  // method, path
+}
+
+// Example:
+// Input:  "POST /login HTTP/1.1"
+// Output: method="POST", path="/login"</code></pre>
+    
+    <p><strong>Step 4:</strong> Parse headers:</p>
+    <pre><code>// Headers format: "Header-Name: value\r\n"
+func parseHeaders(headerLines []string) map[string]string {
+    headerMap := make(map[string]string)
+    for _, headerLine := range headerLines {
+        // Split on first colon
+        parts := strings.SplitN(headerLine, ":", 2)
+        if len(parts) == 2 {
+            key := strings.TrimSpace(parts[0])
+            value := strings.TrimSpace(parts[1])
+            headerMap[key] = value
+        }
+    }
+    return headerMap
+}
+
+// Example:
+// Input:  "Content-Type: application/json\r\n"
+// Output: headerMap["Content-Type"] = "application/json"</code></pre>
+    
+    <p><strong>Step 5:</strong> Parse URL query parameters:</p>
+    <pre><code>// URL format: "/search?q=golang&page=2"
+fullPath := strings.Split(path, "?")
+cleanPath := fullPath[0]  // "/search"
+var queryMap map[string]string
+
+if len(fullPath) > 1 {
+    queryPath := fullPath[1]  // "q=golang&page=2"
+    queryMap = parseKeyValuePairs(queryPath)
+}
+
+// parseKeyValuePairs splits on "&" and "="
+// Result: {"q": "golang", "page": "2"}</code></pre>
+    
+    <p><strong>Step 6:</strong> Parse request body (form data or JSON):</p>
+    <pre><code>var bodyMap map[string]string
+contentType := headerMap["Content-Type"]
+
+if strings.Contains(contentType, "application/json") {
+    bodyMap = parseJSONBody(body)
+} else {
+    // Default: URL-encoded form data
+    bodyMap = parseKeyValuePairs(body)
+}
+
+// For JSON: {"username": "admin", "password": "secret"}
+// For form: username=admin&password=secret
+// Both produce: bodyMap["username"] = "admin"</code></pre>
+    
+    <h4>Key Insights</h4>
+    <div class="insight-box">
+        <p><strong>Why read in chunks instead of all at once?</strong></p>
+        <p>You don't know how much data is coming. Reading in small chunks (256 bytes) allows you to check for the end-of-headers marker (<code>\r\n\r\n</code>) without over-reading.</p>
+        
+        <p><strong>Why the 8KB header size limit?</strong></p>
+        <p>Protection against DoS attacks. A malicious client could send gigabytes of headers, consuming all server memory. Most legitimate requests have headers under 2KB.</p>
+        
+        <p><strong>Why 10-second timeout?</strong></p>
+        <p>Prevents slow-read attacks where a client opens connections but sends data very slowly, tying up server resources. After 10 seconds of inactivity, the connection is closed.</p>
+    </div>
+    
+    <h3>Feature 3: Routing System</h3>
+    
+    <h4>What it does</h4>
+    <p>Maps incoming HTTP requests to handler functions based on method and path.</p>
+    
+    <h4>Why it exists</h4>
+    <p>Different URLs need different behavior. <code>/login</code> shows a login form, <code>/ping</code> returns "pong", etc.</p>
+    
+    <h4>How it works</h4>
+    <p><strong>Step 1:</strong> Register routes at startup:</p>
+    <pre><code>router := server.NewRouter()
+
+// Handler is a function that takes Request, returns response
+router.Register("GET", "/welcome", homeHandler)
+router.Register("POST", "/login", loginHandler)
+router.Register("GET", "/ping", func(req *server.Request) (string, string) {
+    return server.CreateResponse("200", "text/plain", "OK", "pong")
+})</code></pre>
+    
+    <p><strong>Step 2:</strong> Router stores handlers in nested map:</p>
+    <pre><code>type Router struct {
+    routes map[string]map[string]RouteHandler
+}
+
+func (r *Router) Register(method, path string, handler RouteHandler) {
+    if r.routes[method] == nil {
+        r.routes[method] = make(map[string]RouteHandler)
+    }
+    r.routes[method][path] = handler
+}
+
+// Internal structure after registration:
+// routes = {
+//     "GET": {
+//         "/welcome": homeHandler,
+//         "/ping": pingHandler
+//     },
+//     "POST": {
+//         "/login": loginHandler
+//     }
+// }</code></pre>
+    
+    <p><strong>Step 3:</strong> Look up handler for incoming request:</p>
+    <pre><code>func (r *Router) Handle(method, path string, ...) (response, status string) {
+    // Check if method exists
+    if methodRoutes, exists := r.routes[method]; exists {
+        // Check if path exists for this method
+        if handler, exists := methodRoutes[path]; exists {
+            // Build Request object
+            req := &Request{
+                Query:   queryMap,
+                Body:    bodyMap,
+                Browser: browserName,
+                Method:  method,
+                Path:    path,
+            }
+            // Call handler and return its response
+            return handler(req)
+        }
+    }
+    
+    // No matching route - serve 404
+    return serve404()
+}</code></pre>
+    
+    <h4>Example Handler</h4>
+    <pre><code>func loginHandler(req *server.Request) (response, status string) {
+    if req.Method == "GET" {
+        // Show login form
+        t, _ := template.ParseFiles("pages/login.html")
+        var result bytes.Buffer
+        t.Execute(&result, nil)
+        return server.CreateResponse("200", "text/html", "OK", result.String())
+    }
+
+    if req.Method == "POST" {
+        // Process login
+        username := req.Body["username"]
+        password := req.Body["password"]
+        
+        if username == "admin" && password == "secret" {
+            return server.CreateResponse("200", "text/html", "OK",
+                "<h1>Login Successful!</h1><p>Welcome "+username+"!</p>")
+        }
+        return server.CreateResponse("401", "text/html", "Unauthorized",
+            "<h1>Login Failed</h1><p>Wrong credentials</p>")
+    }
+    
+    return server.CreateResponse("405", "text/plain", "Method Not Allowed", "")
+}</code></pre>
+    
+    <h3>Feature 4: Static File Serving</h3>
+    
+    <h4>What it does</h4>
+    <p>Serves HTML, CSS, JavaScript, images, and other static files from the <code>pages/</code> directory.</p>
+    
+    <h4>How it works</h4>
+    <p><strong>Step 1:</strong> Check if requested path matches a file:</p>
+    <pre><code>// Request: GET /styles.css
+cleanPath := "/styles.css"
+
+// Construct file path
+var filePath string
+if cleanPath == "/" {
+    filePath = "pages/index.html"  // Default to index
+} else {
+    filePath = "pages" + cleanPath  // "pages/styles.css"
+}
+
+// Check if file exists
+if fileExists(filePath) {
+    // Serve the file
+} else {
+    // Try routing
+}</code></pre>
+    
+    <p><strong>Step 2:</strong> Security check - prevent path traversal:</p>
+    <pre><code>// Malicious request: GET /../../../etc/passwd
+rawPath := cleanPath
+cleanedRawPath := filepath.Clean(rawPath)  // Normalizes path
+
+// Check for ".." which would escape pages/ directory
+if strings.Contains(cleanedRawPath, "..") {
+    return CreateResponse("403", "text/plain", "Forbidden", "Access denied")
+}
+
+// filepath.Clean converts:
+//   "/../../../etc/passwd" → "/etc/passwd" (contains ..)
+//   "/./styles.css" → "/styles.css"
+//   "/sub/../index.html" → "/index.html" (contains ..)</code></pre>
+    
+    <p><strong>Step 3:</strong> Read file and detect MIME type:</p>
+    <pre><code>content, success := readFileContent(filePath)
+if !success {
+    return serve404()
+}
+
+contentType := getContentType(filePath)
+return CreateResponse("200", contentType, "OK", string(content))
+
+func getContentType(filePath string) string {
+    ext := filepath.Ext(filePath)  // ".css"
+    contentType := mime.TypeByExtension(ext)  // "text/css"
+    
+    if contentType == "" {
+        contentType = "application/octet-stream"  // Binary fallback
+    }
+    return contentType
+}</code></pre>
+    
+    <p><strong>MIME types configured in <code>init()</code>:</strong></p>
+    <pre><code>func init() {
+    // Text files
+    mime.AddExtensionType(".html", "text/html")
+    mime.AddExtensionType(".css", "text/css")
+    mime.AddExtensionType(".js", "application/javascript")
+    
+    // Images
+    mime.AddExtensionType(".jpg", "image/jpeg")
+    mime.AddExtensionType(".png", "image/png")
+    mime.AddExtensionType(".svg", "image/svg+xml")
+    
+    // Fonts
+    mime.AddExtensionType(".woff2", "font/woff2")
+    
+    // ... many more
+}</code></pre>
+    
+    <h4>Key Insights</h4>
+    <div class="insight-box">
+        <p><strong>Why MIME types matter:</strong></p>
+        <p>Browsers use the <code>Content-Type</code> header to know how to handle files. If you send a CSS file with <code>text/plain</code>, the browser won't apply the styles. If you send HTML as <code>application/octet-stream</code>, it will download instead of render.</p>
+        
+        <p><strong>Path traversal vulnerability:</strong></p>
+        <p>Without <code>filepath.Clean()</code> and the ".." check, an attacker could request:</p>
+        <pre><code>GET /../../../etc/passwd</code></pre>
+        <p>This would resolve to <code>pages/../../../etc/passwd</code> = <code>/etc/passwd</code>, exposing system files!</p>
+        
+        <p><strong>Why check file existence before routing?</strong></p>
+        <p>Performance optimization. Static files are the most common requests (HTML, CSS, JS, images). Checking for files first avoids unnecessary routing lookups.</p>
+    </div>
+    
+    <h3>Feature 5: Response Generation</h3>
+    
+    <h4>What it does</h4>
+    <p>Builds a properly formatted HTTP response with status code, headers, and body.</p>
+    
+    <h4>How it works</h4>
+    <pre><code>func CreateResponse(statusCode, contentType, statusMessage, body string) (string, string) {
+    // Get buffer from pool
+    buf := responseBufferPool.Get().(*bytes.Buffer)
+    buf.Reset()
+    
+    defer func() {
+        if buf.Cap() <= 16384 {
+            responseBufferPool.Put(buf)
+        }
+    }()
+
+    // Build response using buffer (efficient string concatenation)
+    buf.WriteString("HTTP/1.1 ")
+    buf.WriteString(statusCode)          // "200"
+    buf.WriteString(" ")
+    buf.WriteString(statusMessage)       // "OK"
+    buf.WriteString("\r\nContent-Type: ")
+    buf.WriteString(contentType)         // "text/html"
+    buf.WriteString("\r\nConnection: keep-alive")
+    buf.WriteString("\r\nContent-Length: ")
+    buf.WriteString(strconv.Itoa(len(body)))
+    buf.WriteString("\r\n\r\n")          // Empty line = end of headers
+    buf.WriteString(body)                // Response body
+
+    return buf.String(), statusCode
+}
+
+// Example output:
+// HTTP/1.1 200 OK\r\n
+// Content-Type: text/html\r\n
+// Connection: keep-alive\r\n
+// Content-Length: 1234\r\n
+// \r\n
+// <html>...</html></code></pre>
+    
+    <h4>Key Insights</h4>
+    <div class="insight-box">
+        <p><strong>Why use bytes.Buffer?</strong></p>
+        <p>String concatenation in Go creates new strings for each operation:</p>
+        <pre><code>// Inefficient - creates 6 intermediate strings
+response := "HTTP/1.1 " + statusCode + " " + statusMessage + "\r\n" + ...</code></pre>
+        
+        <p><code>bytes.Buffer</code> is much more efficient - it grows a single byte slice as needed.</p>
+        
+        <p><strong>Why Content-Length is important:</strong></p>
+        <p>HTTP/1.1 keep-alive requires knowing when the response ends. Without <code>Content-Length</code>, the client doesn't know if the connection has more data coming or if the response is complete.</p>
+        
+        <p><strong>Why return both response string and status code?</strong></p>
+        <p>The status code is returned separately for logging purposes (colored output in terminal).</p>
+    </div>
+
+    <div class="page-break"></div>
+    
+    <h2 id="walkthrough">E. Complete Request Walkthrough</h2>
+    
+    <h3>Example: Processing "GET /login.html HTTP/1.1"</h3>
+    
+    <p>Let's trace a real HTTP request through the entire system, step by step.</p>
+    
+    <h4>Step 1: Client Connects</h4>
+    <pre><code>// Client opens TCP connection to localhost:8080
+// Server's listener.Accept() unblocks and returns net.Conn
+
+conn, err := listener.Accept()
+// conn represents the TCP connection to this client</code></pre>
+    
+    <h4>Step 2: Spawn Handler Goroutine</h4>
+    <pre><code>// Main loop spawns goroutine to handle this connection
+go router.RunConnection(conn)
+
+// Main loop immediately goes back to Accept() for next client
+// This goroutine now handles all interaction with this client</code></pre>
+    
+    <h4>Step 3: Read Raw Bytes from Socket</h4>
+    <pre><code>// Inside RunConnection()
+request, err := readHTTPRequest(conn)
+
+// readHTTPRequest reads bytes until it finds "\r\n\r\n"
+// Client sent:
+// "GET /login.html HTTP/1.1\r\n"
+// "Host: localhost:8080\r\n"
+// "User-Agent: Mozilla/5.0 (Chrome)\r\n"
+// "Connection: keep-alive\r\n"
+// "\r\n"
+
+// request variable now contains this entire string</code></pre>
+    
+    <h4>Step 4: Parse Request Line</h4>
+    <pre><code>// Split headers from body (no body in GET request)
+requestParts := strings.SplitN(request, "\r\n\r\n", 2)
+headerSection := requestParts[0]
+
+// Split into lines
+lines := strings.Split(headerSection, "\r\n")
+// lines[0] = "GET /login.html HTTP/1.1"
+// lines[1] = "Host: localhost:8080"
+// lines[2] = "User-Agent: Mozilla/5.0 (Chrome)"
+// lines[3] = "Connection: keep-alive"
+
+firstLine := lines[0]
+method, path, err := parseRequestLine(firstLine)
+// method = "GET"
+// path = "/login.html"</code></pre>
+    
+    <h4>Step 5: Parse Headers</h4>
+    <pre><code>headerLines := lines[1:]  // All lines after first
+headerMap := parseHeaders(headerLines)
+// headerMap = {
+//     "Host": "localhost:8080",
+//     "User-Agent": "Mozilla/5.0 (Chrome)",
+//     "Connection": "keep-alive"
+// }</code></pre>
+    
+    <h4>Step 6: Detect Browser</h4>
+    <pre><code>browserName := detectBrowser(headerMap["User-Agent"])
+// Checks if User-Agent contains "Chrome", "Firefox", "Safari"
+// browserName = "Chrome"</code></pre>
+    
+    <h4>Step 7: Check for Static File</h4>
+    <pre><code>cleanPath := "/login.html"
+filePath := "pages" + cleanPath  // "pages/login.html"
+
+// Check if file exists
+if fileExists(filePath) {
+    // Yes! login.html exists
+    
+    // Read file content
+    content, success := readFileContent(filePath)
+    // content = entire HTML file as []byte
+    
+    // Determine MIME type
+    contentType := getContentType(filePath)
+    // ".html" → "text/html"
+    
+    // Create HTTP response
+    response, status = CreateResponse("200", contentType, "OK", string(content))
+}</code></pre>
+    
+    <h4>Step 8: Generate HTTP Response</h4>
+    <pre><code>// CreateResponse builds:
+response = "HTTP/1.1 200 OK\r\n" +
+           "Content-Type: text/html\r\n" +
+           "Connection: keep-alive\r\n" +
+           "Content-Length: 3456\r\n" +
+           "\r\n" +
+           "<html>...login form...</html>"
+
+status = "200"</code></pre>
+    
+    <h4>Step 9: Send Response to Client</h4>
+    <pre><code>// Log the request (colored output)
+log.Print(color.GreenString("GET /login.html 200"))
+
+// Write response bytes to TCP connection
+_, err = conn.Write([]byte(response))
+// Client's browser now receives the HTML</code></pre>
+    
+    <h4>Step 10: Check Keep-Alive</h4>
+    <pre><code>// Check if client wants to keep connection open
+if headerMap["Connection"] == "close" {
+    break  // Exit loop, close connection
+}
+
+// Client sent "Connection: keep-alive", so we loop back
+// Wait for next request on same connection...</code></pre>
+    
+    <h4>Step 11: Client Submits Form (POST Request)</h4>
+    <pre><code>// User fills out login form and clicks Submit
+// Browser sends over the SAME TCP connection:
+// "POST /login HTTP/1.1\r\n"
+// "Host: localhost:8080\r\n"
+// "Content-Type: application/x-www-form-urlencoded\r\n"
+// "Content-Length: 33\r\n"
+// "\r\n"
+// "username=admin&password=secret"
+
+// Server reads this request (still in the same goroutine)
+request, err := readHTTPRequest(conn)</code></pre>
+    
+    <h4>Step 12: Parse POST Body</h4>
+    <pre><code>requestParts := strings.SplitN(request, "\r\n\r\n", 2)
+body := requestParts[1]  // "username=admin&password=secret"
+
+contentType := headerMap["Content-Type"]
+// "application/x-www-form-urlencoded"
+
+bodyMap := parseKeyValuePairs(body)
+// bodyMap = {
+//     "username": "admin",
+//     "password": "secret"
+// }</code></pre>
+    
+    <h4>Step 13: Route to Handler</h4>
+    <pre><code>method = "POST"
+cleanPath = "/login"
+
+// Check static files first - no match
+// Fall through to routing
+
+response, status = router.Handle("POST", "/login", nil, bodyMap, "Chrome")
+
+// Router looks up: routes["POST"]["/login"] = loginHandler
+// Calls loginHandler with Request object</code></pre>
+    
+    <h4>Step 14: Handler Processes Login</h4>
+    <pre><code>func loginHandler(req *server.Request) (string, string) {
+    if req.Method == "POST" {
+        username := req.Body["username"]  // "admin"
+        password := req.Body["password"]  // "secret"
+        
+        if username == "admin" && password == "secret" {
+            return server.CreateResponse("200", "text/html", "OK",
+                "<h1>Login Successful!</h1><p>Welcome admin!</p>")
+        }
+        return server.CreateResponse("401", "text/html", "Unauthorized",
+            "<h1>Login Failed</h1>")
+    }
+}
+
+// Handler returns success response</code></pre>
+    
+    <h4>Step 15: Send Login Success Response</h4>
+    <pre><code>// Write response to client
+conn.Write([]byte(response))
+
+// Client's browser displays: "Login Successful! Welcome admin!"
+
+// Check keep-alive again
+if headerMap["Connection"] != "close" {
+    // Loop back, wait for next request...
+}</code></pre>
+    
+    <h4>Step 16: Client Closes Connection</h4>
+    <pre><code>// Eventually, client closes connection
+// conn.Read() returns error: EOF
+
+request, err := readHTTPRequest(conn)
+if err != nil {
+    return  // Exit RunConnection()
+}
+
+// Deferred conn.Close() executes
+defer conn.Close()
+
+// Goroutine terminates
+// TCP connection is closed</code></pre>
+    
+    <div class="insight-box">
+        <h4>Key Observations</h4>
+        <p><strong>Connection reuse:</strong> The same TCP connection handled both GET and POST requests. This is HTTP/1.1 keep-alive in action.</p>
+        
+        <p><strong>Buffer pooling:</strong> Throughout this entire flow, the same 8KB buffer was retrieved from the pool, used, and returned multiple times - no unnecessary allocations.</p>
+        
+        <p><strong>Goroutine lifecycle:</strong> The goroutine lived for the entire connection duration (potentially handling dozens of requests), then terminated cleanly when the connection closed.</p>
+        
+        <p><strong>Blocking operations:</strong> <code>conn.Read()</code> blocks until data arrives. While one goroutine is blocked, thousands of others can be handling their own connections concurrently.</p>
+    </div>
+
+    <div class="page-break"></div>
+    
+    <h2 id="tricky">F. The Tricky Parts</h2>
+    
+    <h3>1. Chunked Reading Without Over-Reading</h3>
+    
+    <p><strong>The Problem:</strong> You need to read until you find <code>\r\n\r\n</code> (end of headers), but you don't know where that will be. If you read too much, you might read part of the body. If you read too little, you'll miss the marker.</p>
+    
+    <p><strong>The Solution:</strong></p>
+    <pre><code>// Read in small chunks (256 bytes)
+for {
+    chunkPtr := chunkBufferPool.Get().(*[]byte)
+    chunk := *chunkPtr
+    
+    n, err := conn.Read(chunk)
+    headerBuffer = append(headerBuffer, chunk[:n]...)
+    chunkBufferPool.Put(chunkPtr)
+
+    // Check after each chunk
+    if strings.Contains(string(headerBuffer), "\r\n\r\n") {
+        break  // Found it!
+    }
+}</code></pre>
+    
+    <p><strong>Why this works:</strong> Small reads (256 bytes) minimize over-reading. Once we find the marker, we stop immediately.</p>
+    
+    <p><strong>Edge case handled:</strong> What if the marker spans two chunks?</p>
+    <pre><code>Chunk 1: "...Header: value\r\n\r"  ← marker starts here
+Chunk 2: "\nBody content..."        ← marker ends here</code></pre>
+    
+    <p>By checking the accumulated <code>headerBuffer</code> (not individual chunks), we correctly detect the marker even when split.</p>
+    
+    <h3>2. Content-Length Handling</h3>
+    
+    <p><strong>The Problem:</strong> If the request body is large, the first read might not get all of it. You need to continue reading until you've received <code>Content-Length</code> bytes.</p>
+    
+    <p><strong>The Solution:</strong></p>
+    <pre><code>// Parse Content-Length header
+contentLengthStr := headerMap["Content-Length"]
+if contentLengthStr != "" {
+    contentLength, err := strconv.Atoi(contentLengthStr)
+    
+    // Check if we've read the full body
+    if len(body) < contentLength {
+        // Still missing some bytes
+        remainingBytes := contentLength - len(body)
+        remainingBuffer := make([]byte, remainingBytes)
+        
+        // Read exactly the remaining bytes
+        _, err := conn.Read(remainingBuffer)
+        body += string(remainingBuffer)
+    }
+}</code></pre>
+    
+    <p><strong>Why this matters:</strong> Large POST requests (file uploads, JSON payloads) often arrive in multiple TCP packets. Without this check, you'd only process part of the data.</p>
+    
+    <h3>3. Buffer Pool Edge Cases</h3>
+    
+    <p><strong>Problem 1:</strong> What if a buffer grows very large?</p>
+    <pre><code>// Malicious or unusual request with 100KB headers
+headerBuffer = append(headerBuffer, chunk...)
+// headerBuffer grows from 8KB to 100KB</code></pre>
+    
+    <p><strong>Solution:</strong> Don't return oversized buffers to the pool:</p>
+    <pre><code>defer func() {
+    if cap(headerBuffer) <= 16384 {  // 16KB limit
+        requestBufferPool.Put(bufPtr)  // Return to pool
+    }
+    // Otherwise, let GC handle it
+}()</code></pre>
+    
+    <p><strong>Why:</strong> If you returned a 100KB buffer, every subsequent request would get a 100KB buffer even though most only need 2-3KB. This wastes memory.</p>
+    
+    <p><strong>Problem 2:</strong> Must reset buffer length, not just capacity:</p>
+    <pre><code>// WRONG - buffer still contains old data
+bufPtr := requestBufferPool.Get().(*[]byte)
+buffer := *bufPtr
+
+// RIGHT - reset to zero length, keep capacity
+bufPtr := requestBufferPool.Get().(*[]byte)
+buffer := (*bufPtr)[:0]</code></pre>
+    
+    <p>The <code>[:0]</code> slice expression sets length to 0 while preserving the underlying array. This ensures old data doesn't leak into new requests.</p>
+    
+    <h3>4. Race Condition in Connection Handling</h3>
+    
+    <p><strong>The Problem:</strong> Multiple goroutines access the router's <code>routes</code> map concurrently. Is this safe?</p>
+    
+    <p><strong>Analysis:</strong></p>
+    <pre><code>// All route registration happens at startup (single-threaded)
+router := server.NewRouter()
+router.Register("GET", "/welcome", homeHandler)
+router.Register("POST", "/login", loginHandler)
+
+// After startup, routes are only READ by goroutines
+handler := router.routes["POST"]["/login"]</code></pre>
+    
+    <p><strong>Verdict:</strong> Safe! Go maps are safe for concurrent reads. Since we never modify <code>routes</code> after startup, there's no race condition.</p>
+    
+    <p><strong>If we needed concurrent writes:</strong> We'd use <code>sync.RWMutex</code>:</p>
+    <pre><code>type Router struct {
+    routes map[string]map[string]RouteHandler
+    mu     sync.RWMutex  // Protects routes
+}
+
+func (r *Router) Handle(...) {
+    r.mu.RLock()  // Multiple readers can acquire this
+    handler := r.routes[method][path]
+    r.mu.RUnlock()
+    return handler(req)
+}</code></pre>
+    
+    <h3>5. Graceful Shutdown Coordination</h3>
+    
+    <p><strong>The Problem:</strong> When Ctrl+C is pressed, you need to:</p>
+    <ol>
+        <li>Stop accepting new connections</li>
+        <li>Let active requests finish</li>
+        <li>Close listeners</li>
+        <li>Exit cleanly</li>
+    </ol>
+    
+    <p><strong>The Solution:</strong></p>
+    <pre><code>// Create context that cancels on interrupt
+ctx, stop := signal.NotifyContext(context.Background(), 
+    os.Interrupt, syscall.SIGTERM)
+defer stop()
+
+// Listener goroutine checks context
+go func() {
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            select {
+            case <-ctx.Done():  // Context cancelled?
+                return          // Stop accepting
+            default:
+                log.Println("Error:", err)
+                continue
+            }
+        }
+        go router.RunConnection(conn)
+    }
+}()
+
+// Main goroutine waits for signal
+<-ctx.Done()  // Blocks until signal received
+log.Println("Shutting down...")
+listener.Close()  // Causes Accept() to error
+time.Sleep(2 * time.Second)  // Grace period for active requests</code></pre>
+    
+    <p><strong>Why this works:</strong></p>
+    <ul>
+        <li><code>signal.NotifyContext</code> creates a context that cancels when SIGINT/SIGTERM received</li>
+        <li>Listener goroutine checks <code>ctx.Done()</code> on errors and exits if cancelled</li>
+        <li>Active connection goroutines finish their current request</li>
+        <li>2-second sleep allows requests to complete before exit</li>
+    </ul>
+    
+    <h3>6. HTTPS/TLS Certificate Loading</h3>
+    
+    <p><strong>The Problem:</strong> Certificates might not exist, be invalid, or have wrong permissions.</p>
+    
+    <p><strong>The Solution:</strong> Defensive error handling:</p>
+    <pre><code>hasTLS := false
+var tlsListener net.Listener
+
+// Check if certificate files exist
+if fileExists("server.crt") && fileExists("server.key") {
+    // Try to load certificate
+    cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+    if err != nil {
+        log.Println("Failed to load TLS certificate:", err)
+        // Continue without TLS - HTTP still works
+    } else {
+        config := &tls.Config{Certificates: []tls.Certificate{cert}}
+        tlsListener, err = tls.Listen("tcp", ":8443", config)
+        if err != nil {
+            log.Println("Failed to listen on TLS port 8443:", err)
+        } else {
+            hasTLS = true  // Success!
+            defer tlsListener.Close()
+        }
+    }
+}
+
+// Only start HTTPS goroutine if TLS succeeded
+if hasTLS {
+    go func() {
+        // Handle HTTPS connections
+    }()
+}</code></pre>
+    
+    <p><strong>Graceful degradation:</strong> If certificates are missing or invalid, the server still runs on HTTP. This makes development easier (no need for certificates to test).</p>
+
+    <div class="page-break"></div>
+    
+    <h2

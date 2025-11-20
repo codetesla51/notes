@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Building a Lexer, Parser & Interpreter from Scratch in Go</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:Georgia,'Times New Roman',serif;background:#fff;color:#000;max-width:900px;margin:0 auto;padding:40px 60px;line-height:1.65;font-size:11pt}h1{font-size:28pt;margin:50px 0 25px;border-bottom:3px solid #000;padding-bottom:10px;page-break-after:avoid}h2{font-size:20pt;margin:40px 0 20px;border-bottom:2px solid #000;padding-bottom:8px;page-break-after:avoid}h3{font-size:14pt;margin:25px 0 15px;font-weight:bold;page-break-after:avoid}h4{font-size:12pt;margin:20px 0 10px;font-weight:bold;font-style:italic}p{margin:10px 0}ul,ol{margin:10px 0 10px 30px}li{margin:5px 0}code{font-family:'Courier New',monospace;background:#f5f5f5;padding:2px 6px;font-size:10pt}pre{background:#f8f8f8;border:1px solid #333;padding:15px;margin:15px 0;overflow-x:auto;page-break-inside:avoid;font-size:9pt;line-height:1.4}strong{font-weight:bold}.note{background:#f0f0f0;border-left:4px solid #000;padding:12px;margin:15px 0;font-style:italic}.important{background:#fffacd;border-left:4px solid #ffa500;padding:12px;margin:15px 0}.toc{background:#fafafa;border:2px solid #000;padding:20px;margin:30px 0;page-break-inside:avoid}.toc ul{list-style:none;margin:10px 0}.toc li{margin:8px 0}.toc a{color:#000;text-decoration:none;border-bottom:1px dotted #666}.toc a:hover{border-bottom:1px solid #000}.section{page-break-before:always;margin-top:40px}.print-btn{position:fixed;top:20px;right:20px;background:#000;color:#fff;border:none;padding:12px 24px;cursor:pointer;font-size:11pt;border-radius:4px;z-index:1000}.print-btn:hover{background:#333}.step{margin:20px 0;padding:15px;border-left:4px solid #000;background:#fafafa}.step-num{font-weight:bold;font-size:12pt;margin-bottom:10px}@media print{.no-print{display:none!important}body{padding:30px}h1{page-break-before:always}h2,h3{page-break-after:avoid}.section{page-break-before:always}}
+</style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()">Print to PDF</button>
+
+<h1>Building a Lexer, Parser & Interpreter from Scratch</h1>
+<p style="font-size:13pt;font-style:italic;margin:20px 0">A Complete Tutorial in Go</p>
+
+<div class="toc">
+<h2 style="border:none;margin:0 0 15px 0">Table of Contents</h2>
+<ul>
+<li><a href="#overview">Introduction: The Three-Stage Pipeline</a></li>
+<li><a href="#lexer">Part 1: Building a Lexer from Scratch</a></li>
+<li><a href="#parser">Part 2: Building a Parser from Scratch</a></li>
+<li><a href="#evaluator">Part 3: Building an Evaluator from Scratch</a></li>
+<li><a href="#integration">Part 4: Putting It All Together</a></li>
+<li><a href="#testing">Part 5: Testing Your Interpreter</a></li>
+<li><a href="#advanced">Part 6: Advanced Features</a></li>
+</ul>
+</div>
+
+<div class="section" id="overview">
+<h1>Introduction: The Three-Stage Pipeline</h1>
+
+<p>Building an interpreter or compiler involves three fundamental stages. Each stage transforms data from one representation to another:</p>
+
+<div class="step">
+<div class="step-num">Stage 1: Lexer (Tokenization)</div>
+<p><strong>Input:</strong> Raw string like "2 + 3 * 4"</p>
+<p><strong>Output:</strong> List of tokens: [NUMBER:2, PLUS, NUMBER:3, MULTIPLY, NUMBER:4]</p>
+<p><strong>Job:</strong> Break input into meaningful chunks (tokens) with types</p>
+</div>
+
+<div class="step">
+<div class="step-num">Stage 2: Parser (Syntax Analysis)</div>
+<p><strong>Input:</strong> List of tokens from lexer</p>
+<p><strong>Output:</strong> Abstract Syntax Tree (AST) representing structure</p>
+<p><strong>Job:</strong> Understand the structure and relationships between tokens</p>
+</div>
+
+<div class="step">
+<div class="step-num">Stage 3: Evaluator (Execution)</div>
+<p><strong>Input:</strong> AST from parser</p>
+<p><strong>Output:</strong> Final result (14 in our example)</p>
+<p><strong>Job:</strong> Walk the tree and compute the actual result</p>
+</div>
+
+<div class="note">
+<strong>Why three stages?</strong> Separation of concerns. Each stage has one job and does it well. This makes testing easy, debugging simple, and extending straightforward. Want to add a new operator? Touch parser and evaluator, not lexer. Want to support new number formats? Touch lexer only.
+</div>
+
+<h3>What We're Building</h3>
+<p>We'll build a calculator that supports:</p>
+<ul>
+<li>Basic arithmetic: +, -, *, /</li>
+<li>Parentheses for grouping</li>
+<li>Numbers (integers and floats)</li>
+<li>Proper operator precedence (multiplication before addition)</li>
+</ul>
+
+<p>Once you understand these foundations, extending to functions, variables, and more is straightforward—we'll show you how.</p>
+
+</div>
+
+<div class="section" id="lexer">
+<h1>Part 1: Building a Lexer from Scratch</h1>
+
+<h3>What is a Lexer?</h3>
+<p>A lexer (lexical analyzer) reads source code character by character and groups characters into tokens. Think of it like reading English—you don't process individual letters, you recognize words. The lexer recognizes "words" of your programming language.</p>
+
+<h3>Step 1: Define Your Tokens</h3>
+
+<p>First, decide what tokens your language has. For our calculator:</p>
+
+<pre>
+// token.go
+package main
+
+type TokenType string
+
+const (
+    // Special tokens
+    ILLEGAL = "ILLEGAL"  // Unknown character
+    EOF     = "EOF"      // End of file
+    
+    // Literals
+    NUMBER = "NUMBER"    // 123, 3.14
+    
+    // Operators
+    PLUS     = "+"
+    MINUS    = "-"
+    MULTIPLY = "*"
+    DIVIDE   = "/"
+    
+    // Grouping
+    LPAREN = "("
+    RPAREN = ")"
+)
+
+type Token struct {
+    Type    TokenType
+    Literal string
+}
+</pre>
+
+<div class="note">
+<strong>Key insight:</strong> Each token has a TYPE (what kind of thing it is) and a LITERAL (the actual text). This separation is crucial—"123" and "456" are both NUMBER tokens with different literals.
+</div>
+
+<h3>Step 2: Build the Lexer Structure</h3>
+
+<p>The lexer needs to track its position in the input string:</p>
+
+<pre>
+// lexer.go
+package main
+
+type Lexer struct {
+    input        string
+    position     int  // current position in input
+    readPosition int  // next position to read
+    ch           byte // current character
+}
+
+func NewLexer(input string) *Lexer {
+    l := &Lexer{input: input}
+    l.readChar() // Initialize first character
+    return l
+}
+</pre>
+
+<h3>Step 3: Character Reading</h3>
+
+<p>The core method that advances through the input:</p>
+
+<pre>
+func (l *Lexer) readChar() {
+    if l.readPosition >= len(l.input) {
+        l.ch = 0  // ASCII null = EOF
+    } else {
+        l.ch = l.input[l.readPosition]
+    }
+    l.position = l.readPosition
+    l.readPosition++
+}
+
+func (l *Lexer) peekChar() byte {
+    if l.readPosition >= len(l.input) {
+        return 0
+    }
+    return l.input[l.readPosition]
+}
+</pre>
+
+<div class="note">
+<strong>Why two positions?</strong> <code>position</code> is where we are NOW. <code>readPosition</code> is where we'll be NEXT. This lets us peek ahead without moving—essential for recognizing multi-character tokens like "==" or "123".
+</div>
+
+<h3>Step 4: Token Recognition - The Heart of the Lexer</h3>
+
+<p>This is where the magic happens. We look at the current character and decide what token it is:</p>
+
+<pre>
+func (l *Lexer) NextToken() Token {
+    var tok Token
+    
+    l.skipWhitespace()
+    
+    switch l.ch {
+    case '+':
+        tok = Token{Type: PLUS, Literal: string(l.ch)}
+    case '-':
+        tok = Token{Type: MINUS, Literal: string(l.ch)}
+    case '*':
+        tok = Token{Type: MULTIPLY, Literal: string(l.ch)}
+    case '/':
+        tok = Token{Type: DIVIDE, Literal: string(l.ch)}
+    case '(':
+        tok = Token{Type: LPAREN, Literal: string(l.ch)}
+    case ')':
+        tok = Token{Type: RPAREN, Literal: string(l.ch)}
+    case 0:
+        tok = Token{Type: EOF, Literal: ""}
+    default:
+        if isDigit(l.ch) {
+            tok.Literal = l.readNumber()
+            tok.Type = NUMBER
+            return tok  // readNumber() already advanced position
+        } else {
+            tok = Token{Type: ILLEGAL, Literal: string(l.ch)}
+        }
+    }
+    
+    l.readChar()
+    return tok
+}
+</pre>
+
+<h3>Step 5: Helper Functions</h3>
+
+<pre>
+func (l *Lexer) skipWhitespace() {
+    for l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == '\r' {
+        l.readChar()
+    }
+}
+
+func isDigit(ch byte) bool {
+    return '0' <= ch && ch <= '9'
+}
+
+func (l *Lexer) readNumber() string {
+    position := l.position
+    
+    // Read all digits
+    for isDigit(l.ch) {
+        l.readChar()
+    }
+    
+    // Check for decimal point
+    if l.ch == '.' && isDigit(l.peekChar()) {
+        l.readChar() // skip '.'
+        for isDigit(l.ch) {
+            l.readChar()
+        }
+    }
+    
+    return l.input[position:l.position]
+}
+</pre>
+
+<div class="important">
+<strong>Critical pattern:</strong> Notice how <code>readNumber()</code> keeps calling <code>readChar()</code> until it hits a non-digit. This is how we recognize multi-character tokens. The position tracking gives us the start and end positions to slice out the complete number.
+</div>
+
+<h3>Testing Your Lexer</h3>
+
+<pre>
+func main() {
+    input := "2 + 3 * (4 - 1)"
+    lexer := NewLexer(input)
+    
+    for {
+        tok := lexer.NextToken()
+        fmt.Printf("Type: %-10s Literal: %s\n", tok.Type, tok.Literal)
+        
+        if tok.Type == EOF {
+            break
+        }
+    }
+}
+</pre>
+
+<p><strong>Expected Output:</strong></p>
+<pre>
+Type: NUMBER     Literal: 2
+Type: +          Literal: +
+Type: NUMBER     Literal: 3
+Type: *          Literal: *
+Type: (          Literal: (
+Type: NUMBER     Literal: 4
+Type: -          Literal: -
+Type: NUMBER     Literal: 1
+Type: )          Literal: )
+Type: EOF        Literal: 
+</pre>
+
+<div class="note">
+<strong>What you've learned:</strong> The lexer is a state machine that advances through input one character at a time, accumulating characters into tokens. The key insight is recognizing when a token starts and ends. Single-character tokens are easy. Multi-character tokens require lookahead and accumulation.
+</div>
+
+</div>
+
+<div class="section" id="parser">
+<h1>Part 2: Building a Parser from Scratch</h1>
+
+<h3>What is a Parser?</h3>
+<p>A parser takes the flat list of tokens and builds a tree structure (Abstract Syntax Tree) that represents the mathematical relationships. For "2 + 3 * 4", we need a tree that shows multiplication happens before addition.</p>
+
+<h3>Understanding Abstract Syntax Trees (AST)</h3>
+
+<p>An AST represents code structure as a tree. Each node is either:</p>
+<ul>
+<li><strong>Terminal (leaf):</strong> Actual values like numbers</li>
+<li><strong>Non-terminal (branch):</strong> Operations that have sub-expressions</li>
+</ul>
+
+<p>For "2 + 3 * 4":</p>
+<pre>
+       +
+      / \
+     2   *
+        / \
+       3   4
+</pre>
+
+<p>Evaluation happens bottom-up: First 3*4=12, then 2+12=14. The tree structure ENCODES precedence!</p>
+
+<h3>Step 1: Define Node Types</h3>
+
+<pre>
+// ast.go
+package main
+
+type NodeType int
+
+const (
+    NODE_NUMBER NodeType = iota
+    NODE_BINARY_OP
+)
+
+type Node struct {
+    Type  NodeType
+    Value string  // For numbers: "42"; for operators: "+", "*", etc.
+    Left  *Node
+    Right *Node
+}
+</pre>
+
+<h3>Step 2: Parser Structure</h3>
+
+<pre>
+// parser.go
+package main
+
+import "fmt"
+
+type Parser struct {
+    lexer   *Lexer
+    current Token
+    peek    Token
+}
+
+func NewParser(lexer *Lexer) *Parser {
+    p := &Parser{lexer: lexer}
+    
+    // Read two tokens so current and peek are both set
+    p.nextToken()
+    p.nextToken()
+    
+    return p
+}
+
+func (p *Parser) nextToken() {
+    p.current = p.peek
+    p.peek = p.lexer.NextToken()
+}
+</pre>
+
+<div class="note">
+<strong>Why two tokens?</strong> We need to look ahead to make parsing decisions. If current is NUMBER and peek is MULTIPLY, we know we're in a multiplication expression. This one-token lookahead is sufficient for most languages.
+</div>
+
+<h3>Step 3: Precedence-Based Parsing (The Core Idea)</h3>
+
+<p>The key insight: Each operator has a precedence level, and we parse from LOWEST to HIGHEST precedence. This naturally creates the right tree structure.</p>
+
+<p><strong>Precedence levels for our calculator:</strong></p>
+<ol>
+<li>Addition and Subtraction (lowest)</li>
+<li>Multiplication and Division (higher)</li>
+<li>Parentheses and Numbers (highest)</li>
+</ol>
+
+<h3>Step 4: Recursive Descent Parser</h3>
+
+<p>We'll write one function per precedence level. Each function handles its operators and calls the next higher precedence level:</p>
+
+<pre>
+// Entry point - starts at lowest precedence
+func (p *Parser) ParseExpression() (*Node, error) {
+    return p.parseAddSub()
+}
+
+// Lowest precedence: + and -
+func (p *Parser) parseAddSub() (*Node, error) {
+    // First, parse higher precedence (multiplication)
+    left, err := p.parseMulDiv()
+    if err != nil {
+        return nil, err
+    }
+    
+    // Then look for + or - operators
+    for p.current.Type == PLUS || p.current.Type == MINUS {
+        op := p.current.Literal
+        p.nextToken()
+        
+        right, err := p.parseMulDiv()
+        if err != nil {
+            return nil, err
+        }
+        
+        left = &Node{
+            Type:  NODE_BINARY_OP,
+            Value: op,
+            Left:  left,
+            Right: right,
+        }
+    }
+    
+    return left, nil
+}
+
+// Higher precedence: * and /
+func (p *Parser) parseMulDiv() (*Node, error) {
+    // First, parse highest precedence (numbers/parentheses)
+    left, err := p.parsePrimary()
+    if err != nil {
+        return nil, err
+    }
+    
+    // Then look for * or / operators
+    for p.current.Type == MULTIPLY || p.current.Type == DIVIDE {
+        op := p.current.Literal
+        p.nextToken()
+        
+        right, err := p.parsePrimary()
+        if err != nil {
+            return nil, err
+        }
+        
+        left = &Node{
+            Type:  NODE_BINARY_OP,
+            Value: op,
+            Left:  left,
+            Right: right,
+        }
+    }
+    
+    return left, nil
+}
+
+// Highest precedence: numbers and parentheses
+func (p *Parser) parsePrimary() (*Node, error) {
+    switch p.current.Type {
+    case NUMBER:
+        node := &Node{
+            Type:  NODE_NUMBER,
+            Value: p.current.Literal,
+        }
+        p.nextToken()
+        return node, nil
+        
+    case LPAREN:
+        p.nextToken() // skip '('
+        
+        node, err := p.parseAddSub() // Parse the expression inside
+        if err != nil {
+            return nil, err
+        }
+        
+        if p.current.Type != RPAREN {
+            return nil, fmt.Errorf("expected ')', got %s", p.current.Type)
+        }
+        p.nextToken() // skip ')'
+        
+        return node, nil
+        
+    default:
+        return nil, fmt.Errorf("unexpected token: %s", p.current.Type)
+    }
+}
+</pre>
+
+<div class="important">
+<strong>The magic explained:</strong> When we parse "2 + 3 * 4":
+<ol>
+<li>parseAddSub calls parseMulDiv for left side</li>
+<li>parseMulDiv gets "2" from parsePrimary, sees no *, returns 2</li>
+<li>parseAddSub sees +, calls parseMulDiv for right side</li>
+<li>parseMulDiv gets "3", sees *, gets "4", creates (3*4) node, returns it</li>
+<li>parseAddSub creates (2 + (3*4)) node</li>
+</ol>
+The recursive calls naturally enforce precedence!
+</div>
+
+<h3>Testing Your Parser</h3>
+
+<pre>
+func printAST(node *Node, indent int) {
+    if node == nil {
+        return
+    }
+    
+    spaces := ""
+    for i := 0; i < indent; i++ {
+        spaces += "  "
+    }
+    
+    if node.Type == NODE_NUMBER {
+        fmt.Printf("%sNUMBER: %s\n", spaces, node.Value)
+    } else {
+        fmt.Printf("%sOP: %s\n", spaces, node.Value)
+        printAST(node.Left, indent+1)
+        printAST(node.Right, indent+1)
+    }
+}
+
+func main() {
+    input := "2 + 3 * 4"
+    lexer := NewLexer(input)
+    parser := NewParser(lexer)
+    
+    ast, err := parser.ParseExpression()
+    if err != nil {
+        fmt.Printf("Parser error: %v\n", err)
+        return
+    }
+    
+    fmt.Println("AST for:", input)
+    printAST(ast, 0)
+}
+</pre>
+
+<p><strong>Expected Output:</strong></p>
+<pre>
+AST for: 2 + 3 * 4
+OP: +
+  NUMBER: 2
+  OP: *
+    NUMBER: 3
+    NUMBER: 4
+</pre>
+
+<div class="note">
+<strong>What you've learned:</strong> Recursive descent parsing with precedence climbing is the standard technique for parsing expressions. The key is: lower precedence functions call higher precedence functions. This naturally creates correct tree structure where high-precedence operations become children (execute first) of low-precedence operations.
+</div>
+
+</div>
+
+<div class="section" id="evaluator">
+<h1>Part 3: Building an Evaluator from Scratch</h1>
+
+<h3>What is an Evaluator?</h3>
+<p>The evaluator walks the AST and computes the actual result. It's the simplest part because the parser did the hard work of understanding structure.</p>
+
+<h3>Step 1: The Core Evaluation Function</h3>
+
+<p>Evaluation is recursive—to evaluate a node, evaluate its children first:</p>
+
+<pre>
+// evaluator.go
+package main
+
+import (
+    "fmt"
+    "strconv"
+)
+
+func Eval(node *Node) (float64, error) {
+    if node == nil {
+        return 0, fmt.Errorf("nil node")
+    }
+    
+    switch node.Type {
+    case NODE_NUMBER:
+        return strconv.ParseFloat(node.Value, 64)
+        
+    case NODE_BINARY_OP:
+        // Recursively evaluate left and right
+        left, err := Eval(node.Left)
+        if err != nil {
+            return 0, err
+        }
+        
+        right, err := Eval(node.Right)
+        if err != nil {
+            return 0, err
+        }
+        
+        // Apply operator
+        switch node.Value {
+        case "+":
+            return left + right, nil
+        case "-":
+            return left - right, nil
+        case "*":
+            return left * right, nil
+        case "/":
+            if right == 0 {
+                return 0, fmt.Errorf("division by zero")
+            }
+            return left / right, nil
+        default:
+            return 0, fmt.Errorf("unknown operator: %s", node.Value)
+        }
+        
+    default:
+        return 0, fmt.Errorf("unknown node type")
+    }
+}
+</pre>
+
+<div class="note">
+<strong>Why this works:</strong> The AST structure guarantees we evaluate in the right order. For "2 + 3 * 4", we recursively evaluate the * node first (because it's a child), which gives 12, then we do 2 + 12. The tree structure IS the execution order!
+</div>
+
+<h3>Step 2: Error Handling</h3>
+
+<p>Good evaluators catch errors:</p>
+
+<pre>
+func EvalSafe(node *Node) {
+    result, err := Eval(node)
+    if err != nil {
+        fmt.Printf("Evaluation error: %v\n", err)
+        return
+    }
+    fmt.Printf("Result: %g\n", result)
+}
+</pre>
+
+<h3>Complete Working Example</h3>
+
+<pre>
+func main() {
+    expressions := []string{
+        "2 + 3",
+        "2 + 3 * 4",
+        "(2 + 3) * 4",
+        "10 / 2 - 3",
+        "1 + 2 + 3 + 4",
+    }
+    
+    for _, expr := range expressions {
+        fmt.Printf("\nExpression: %s\n", expr)
+        
+        lexer := NewLexer(expr)
+        parser := NewParser(lexer)
+        ast, err := parser.ParseExpression()
+        
+        if err != nil {
+            fmt.Printf("Parse error: %v\n", err)
+            continue
+        }
+        
+        result, err := Eval(ast)
+        if err != nil {
+            fmt.Printf("Eval error: %v\n", err)
+            continue
+        }
+        
+        fmt.Printf("Result: %g\n", result)
+    }
+}
+</pre>
+
+<p><strong>Expected Output:</strong></p>
+<pre>
+Expression: 2 + 3
+Result: 5
+
+Expression: 2 + 3 * 4
+Result: 14
+
+Expression: (2 + 3) * 4
+Result: 20
+
+Expression: 10 / 2 - 3
+Result: 2
+
+Expression: 1 + 2 + 3 + 4
+Result: 10
+</pre>
+
+<div class="important">
+<strong>Success!</strong> You now have a working calculator that correctly handles operator precedence and parentheses. This is the foundation of every interpreter and compiler.
+</div>
+
+</div>
+
+<div class="section" id="integration">
+<h1>Part 4: Putting It All Together</h1>
+
+<h3>Building a REPL (Read-Eval-Print Loop)</h3>
+
+<p>A REPL makes your interpreter interactive:</p>
+
+<pre>
+package main
+
+import (
+    "bufio"
+    "fmt"
+    "os"
+    "strings"
+)
+
+func main() {
+    scanner := bufio.NewScanner(os.Stdin)
+    
+    fmt.Println("Simple Calculator REPL")
+    fmt.Println("Enter expressions (or 'exit' to quit)")
+    fmt.Println()
+    
+    for {
+        fmt.Print(">> ")
+        
+        if !scanner.Scan() {
+            break
+        }
+        
+        line := strings.TrimSpace(scanner.Text())
+        
+        if line == "exit" || line == "quit" {
+            fmt.Println("Goodbye!")
+            break
+        }
+        
+        if line == "" {
+            continue
+        }
+        
+        // Lexer stage
+        lexer := NewLexer(line)
+        
+        // Parser stage
+        parser := NewParser(lexer)
+        ast, err := parser.ParseExpression()
+        if err != nil {
+            fmt.Printf("Parse error: %v\n", err)
+            continue
+        }
+        
+        // Evaluator stage
+        result, err := Eval(ast)
+        if err != nil {
+            fmt.Printf("Eval error: %v\n", err)
+            continue
+        }
+        
+        fmt.Printf("= %g\n\n", result)
+    }
+}
+</pre>
+
+<h3>Project Structure</h3>
+
+<p>Organize your code into separate files:</p>
+
+<pre>
+calculator/
+├── main.go        # REPL and entry point
+├── token.go       # Token types and Token struct
+├── lexer.go       # Lexer implementation
+├── ast.go         # AST node definitions
+├── parser.go      # Parser implementation
+└── evaluator.go   # Evaluation logic
+</pre>
+
+</div>
+
+<div class="section" id="testing">
+<h1>Part 5: Testing Your Interpreter</h1>
+
+<h3>Unit Testing the Lexer</h3>
+
+<pre>
+// lexer_test.go
+package main
+
+import "testing"
+
+func TestLexer(t *testing.T) {
+    input := "2 + 3"
+    expected := []struct {
+        typ TokenType
+        lit string
+    }{
+        {NUMBER, "2"},
+        {PLUS, "+"},
+        {NUMBER, "3"},
+        {EOF, ""},
+    }
+    
+    lexer := NewLexer(input)
+    
+    for i, exp := range expected {
+        tok := lexer.NextToken()
+        
+        if tok.Type != exp.typ {
+            t.Fatalf("test[%d] - wrong type. expected=%q, got=%q",
+                i, exp.typ, tok.Type)
+        }
+        
+        if tok.Literal != exp.lit {
+            t.Fatalf("test[%d] - wrong literal. expected=%q, got=%q",
+                i, exp.lit, tok.Literal)
+        }
+    }
+}
+</pre>
+
+<h3>Integration Testing</h3>
+
+<pre>
+func TestEvaluation(t *testing.T) {
+    tests := []struct {
+        input    string
+        expected float64
+    }{
+        {"5", 5},
+        {"10 + 5", 15},
+        {"10 - 5", 5},
+        {"10 * 5", 50},
+        {"10 / 5", 2},
+        {"2 + 3 * 4", 14},
+        {"(2 + 3) * 4", 20},
+        {"10 + 2 * 3 - 4 / 2", 14},
+    }
+    
+    for _, tt := range tests {
+        lexer := NewLexer(tt.input)
+        parser := NewParser(lexer)
+        ast, err := parser.ParseExpression()
+        
+        if err != nil {
+            t.Fatalf("parse error for %q: %v", tt.input, err)
+        }
+        
+        result, err := Eval(ast)
+        if err != nil {
+            t.Fatalf("eval error for %q: %v", tt.input, err)
+        }
+        
+        if result != tt.expected {
+            t.Errorf("for %q: expected=%g, got=%g",
+                tt.input, tt.expected, result)
+        }
+    }
+}
+</pre>
+
+</div>
+
+<div class="section" id="advanced">
+<h1>Part 6: Advanced Features</h1>
+
+<h3>Adding Variables</h3>
+
+<p><strong>1. Add variable assignment token:</strong></p>
+<pre>
+const (
+    // ... existing tokens
+    IDENT  = "IDENT"
+    ASSIGN = "="
+)
+</pre>
+
+<p><strong>2. Lexer recognizes identifiers:</strong></p>
+<pre>
+func isLetter(ch byte) bool {
+    return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || ch == '_'
+}
+
+func (l *Lexer) readIdentifier() string {
+    position := l.position
+    for isLetter(l.ch) || isDigit(l.ch) {
+        l.readChar()
+    }
+    return l.input[position:l.position]
+}
+
+// In NextToken():
+default:
+    if isLetter(l.ch) {
+        tok.Literal = l.readIdentifier()
+        tok.Type = IDENT
+        return tok
+    } else if isDigit(l.ch) {
+        // ... number handling
+    }
+</pre>
+
+<p><strong>3. Add assignment node type:</strong></p>
+<pre>
+const (
+    NODE_NUMBER NodeType = iota
+    NODE_BINARY_OP
+    NODE_IDENT
+    NODE_ASSIGN
+)
+</pre>
+
+<p><strong>4. Parser handles assignments:</strong></p>
+<pre>
+func (p *Parser) ParseExpression() (*Node, error) {
+    // Check for assignment: x = expression
+    if p.current.Type == IDENT && p.peek.Type == ASSIGN {
+        name := p.current.Literal
+        p.nextToken() // skip identifier
+        p.nextToken() // skip '='
+        
+        value, err := p.parseAddSub()
+        if err != nil {
+            return nil, err
+        }
+        
+        return &Node{
+            Type:  NODE_ASSIGN,
+            Value: name,
+            Right: value,
+        }, nil
+    }
+    
+    return p.parseAddSub()
+}
+
+// Add to parsePrimary():
+case IDENT:
+    node := &Node{
+        Type:  NODE_IDENT,
+        Value: p.current.Literal,
+    }
+    p.nextToken()
+    return node, nil
+</pre>
+
+<p><strong>5. Evaluator maintains variable storage:</strong></p>
+<pre>
+var variables = make(map[string]float64)
+
+func Eval(node *Node) (float64, error) {
+    switch node.Type {
+    case NODE_NUMBER:
+        return strconv.ParseFloat(node.Value, 64)
+        
+    case NODE_IDENT:
+        val, ok := variables[node.Value]
+        if !ok {
+            return 0, fmt.Errorf("undefined variable: %s", node.Value)
+        }
+        return val, nil
+        
+    case NODE_ASSIGN:
+        value, err := Eval(node.Right)
+        if err != nil {
+            return 0, err
+        }
+        variables[node.Value] = value
+        return value, nil
+        
+    case NODE_BINARY_OP:
+        // ... existing code
+    }
+}
+</pre>
+
+<p><strong>Now you can do:</strong></p>
+<pre>
+>> x = 10
+= 10
+>> y = 20
+= 20
+>> x + y
+= 30
+>> result = x * y + 5
+= 205
+</pre>
+
+<h3>Adding Functions</h3>
+
+<p><strong>1. Add function token and recognize built-ins:</strong></p>
+<pre>
+const (
+    // ... existing
+    FUNCTION = "FUNCTION"
+)
+
+var functions = map[string]bool{
+    "sin": true, "cos": true, "sqrt": true,
+    "abs": true, "log": true,
+}
+
+func (l *Lexer) readIdentifier() string {
+    position := l.position
+    for isLetter(l.ch) || isDigit(l.ch) {
+        l.readChar()
+    }
+    ident := l.input[position:l.position]
+    
+    // Check if it's a function
+    if functions[ident] {
+        return ident // Will be marked as FUNCTION
+    }
+    return ident
+}
+</pre>
+
+<p><strong>2. Add function call node:</strong></p>
+<pre>
+const (
+    // ... existing
+    NODE_FUNCTION_CALL
+)
+
+// Node now needs Children for arguments:
+type Node struct {
+    Type     NodeType
+    Value    string
+    Left     *Node
+    Right    *Node
+    Children []*Node  // For function arguments
+}
+</pre>
+
+<p><strong>3. Parser handles function calls:</strong></p>
+<pre>
+func (p *Parser) parsePrimary() (*Node, error) {
+    // ... existing cases
+    
+    case IDENT:
+        name := p.current.Literal
+        p.nextToken()
+        
+        // Check if it's a function call
+        if p.current.Type == LPAREN {
+            p.nextToken() // skip '('
+            
+            // Parse argument
+            arg, err := p.parseAddSub()
+            if err != nil {
+                return nil, err
+            }
+            
+            if p.current.Type != RPAREN {
+                return nil, fmt.Errorf("expected ')'")
+            }
+            p.nextToken() // skip ')'
+            
+            return &Node{
+                Type:     NODE_FUNCTION_CALL,
+                Value:    name,
+                Children: []*Node{arg},
+            }, nil
+        }
+        
+        // Regular identifier
+        return &Node{Type: NODE_IDENT, Value: name}, nil
+}
+</pre>
+
+<p><strong>4. Evaluator computes functions:</strong></p>
+<pre>
+import "math"
+
+func Eval(node *Node) (float64, error) {
+    switch node.Type {
+    // ... existing cases
+    
+    case NODE_FUNCTION_CALL:
+        if len(node.Children) != 1 {
+            return 0, fmt.Errorf("%s requires 1 argument", node.Value)
+        }
+        
+        arg, err := Eval(node.Children[0])
+        if err != nil {
+            return 0, err
+        }
+        
+        switch node.Value {
+        case "sin":
+            return math.Sin(arg * math.Pi / 180), nil
+        case "cos":
+            return math.Cos(arg * math.Pi / 180), nil
+        case "sqrt":
+            if arg < 0 {
+                return 0, fmt.Errorf("sqrt of negative number")
+            }
+            return math.Sqrt(arg), nil
+        case "abs":
+            return math.Abs(arg), nil
+        case "log":
+            if arg <= 0 {
+                return 0, fmt.Errorf("log of non-positive number")
+            }
+            return math.Log10(arg), nil
+        default:
+            return 0, fmt.Errorf("unknown function: %s", node.Value)
+        }
+    }
+}
+</pre>
+
+<p><strong>Now you can do:</strong></p>
+<pre>
+>> sqrt(16)
+= 4
+>> sin(30)
+= 0.5
+>> abs(-5)
+= 5
+>> r = 5
+= 5
+>> area = 3.14159 * r * r
+= 78.53975
+</pre>
+
+<h3>Adding Comparison Operators</h3>
+
+<p><strong>1. Add comparison tokens:</strong></p>
+<pre>
+const (
+    // ... existing
+    EQUAL         = "=="
+    NOT_EQUAL     = "!="
+    LESS_THAN     = "<"
+    GREATER_THAN  = ">"
+)
+</pre>
+
+<p><strong>2. Lexer recognizes two-character operators:</strong></p>
+<pre>
+func (l *Lexer) NextToken() Token {
+    // ... in switch statement
+    
+    case '=':
+        if l.peekChar() == '=' {
+            ch := l.ch
+            l.readChar()
+            tok = Token{Type: EQUAL, Literal: string(ch) + string(l.ch)}
+        } else {
+            tok = Token{Type: ASSIGN, Literal: string(l.ch)}
+        }
+    
+    case '!':
+        if l.peekChar() == '=' {
+            ch := l.ch
+            l.readChar()
+            tok = Token{Type: NOT_EQUAL, Literal: string(ch) + string(l.ch)}
+        } else {
+            tok = Token{Type: ILLEGAL, Literal: string(l.ch)}
+        }
+    
+    case '<':
+        tok = Token{Type: LESS_THAN, Literal: string(l.ch)}
+    
+    case '>':
+        tok = Token{Type: GREATER_THAN, Literal: string(l.ch)}
+}
+</pre>
+
+<p><strong>3. Add comparison parsing (lower precedence than arithmetic):</strong></p>
+<pre>
+func (p *Parser) ParseExpression() (*Node, error) {
+    // ... handle assignment first
+    return p.parseComparison()
+}
+
+func (p *Parser) parseComparison() (*Node, error) {
+    left, err := p.parseAddSub()
+    if err != nil {
+        return nil, err
+    }
+    
+    for p.current.Type == EQUAL || p.current.Type == NOT_EQUAL ||
+        p.current.Type == LESS_THAN || p.current.Type == GREATER_THAN {
+        
+        op := p.current.Literal
+        p.nextToken()
+        
+        right, err := p.parseAddSub()
+        if err != nil {
+            return nil, err
+        }
+        
+        left = &Node{
+            Type:  NODE_BINARY_OP,
+            Value: op,
+            Left:  left,
+            Right: right,
+        }
+    }
+    
+    return left, nil
+}
+</pre>
+
+<p><strong>4. Evaluator handles comparisons (return 1 for true, 0 for false):</strong></p>
+<pre>
+case NODE_BINARY_OP:
+    left, err := Eval(node.Left)
+    if err != nil {
+        return 0, err
+    }
+    
+    right, err := Eval(node.Right)
+    if err != nil {
+        return 0, err
+    }
+    
+    switch node.Value {
+    case "+": return left + right, nil
+    case "-": return left - right, nil
+    case "*": return left * right, nil
+    case "/": 
+        if right == 0 {
+            return 0, fmt.Errorf("division by zero")
+        }
+        return left / right, nil
+    
+    // Comparisons
+    case "==":
+        if left == right {
+            return 1, nil
+        }
+        return 0, nil
+    case "!=":
+        if left != right {
+            return 1, nil
+        }
+        return 0, nil
+    case "<":
+        if left < right {
+            return 1, nil
+        }
+        return 0, nil
+    case ">":
+        if left > right {
+            return 1, nil
+        }
+        return 0, nil
+    }
+</pre>
+
+<h3>Adding Exponentiation (Right-Associative Operator)</h3>
+
+<p><strong>Key insight:</strong> Most operators are left-associative (2-3-4 = (2-3)-4), but exponentiation is right-associative (2^3^2 = 2^(3^2)).</p>
+
+<pre>
+const (
+    // ... existing
+    POWER = "^"
+)
+
+// Add between multiplication and primary:
+func (p *Parser) parseMulDiv() (*Node, error) {
+    left, err := p.parsePower()  // Call power instead of primary
+    if err != nil {
+        return nil, err
+    }
+    
+    for p.current.Type == MULTIPLY || p.current.Type == DIVIDE {
+        op := p.current.Literal
+        p.nextToken()
+        
+        right, err := p.parsePower()  // Call power
+        if err != nil {
+            return nil, err
+        }
+        
+        left = &Node{
+            Type:  NODE_BINARY_OP,
+            Value: op,
+            Left:  left,
+            Right: right,
+        }
+    }
+    
+    return left, nil
+}
+
+// Right-associative power operator
+func (p *Parser) parsePower() (*Node, error) {
+    left, err := p.parsePrimary()
+    if err != nil {
+        return nil, err
+    }
+    
+    if p.current.Type == POWER {
+        op := p.current.Literal
+        p.nextToken()
+        
+        // KEY: Call parsePower recursively (not parsePrimary)
+        // This makes it right-associative
+        right, err := p.parsePower()
+        if err != nil {
+            return nil, err
+        }
+        
+        return &Node{
+            Type:  NODE_BINARY_OP,
+            Value: op,
+            Left:  left,
+            Right: right,
+        }, nil
+    }
+    
+    return left, nil
+}
+
+// Evaluator:
+case "^":
+    return math.Pow(left, right), nil
+</pre>
+
+<p><strong>Now you can do:</strong></p>
+<pre>
+>> 2 ^ 3
+= 8
+>> 2 ^ 3 ^ 2
+= 512    // Correctly evaluates as 2^(3^2), not (2^3)^2
+</pre>
+
+<h3>Adding Unary Operators (Negation)</h3>
+
+<p><strong>1. Add unary node type:</strong></p>
+<pre>
+const (
+    // ... existing
+    NODE_UNARY_OP
+)
+</pre>
+
+<p><strong>2. Parser handles unary minus in primary:</strong></p>
+<pre>
+func (p *Parser) parsePrimary() (*Node, error) {
+    // Handle unary minus
+    if p.current.Type == MINUS {
+        p.nextToken()
+        
+        operand, err := p.parsePrimary()
+        if err != nil {
+            return nil, err
+        }
+        
+        return &Node{
+            Type:  NODE_UNARY_OP,
+            Value: "-",
+            Left:  operand,
+        }, nil
+    }
+    
+    // ... existing cases
+}
+</pre>
+
+<p><strong>3. Evaluator handles unary operators:</strong></p>
+<pre>
+case NODE_UNARY_OP:
+    operand, err := Eval(node.Left)
+    if err != nil {
+        return 0, err
+    }
+    
+    switch node.Value {
+    case "-":
+        return -operand, nil
+    default:
+        return 0, fmt.Errorf("unknown unary operator: %s", node.Value)
+    }
+</pre>
+
+<p><strong>Now you can do:</strong></p>
+<pre>
+>> -5 + 10
+= 5
+>> -(2 + 3)
+= -5
+>> -sin(30)
+= -0.5
+</pre>
+
+<h3>Error Recovery and Better Error Messages</h3>
+
+<p><strong>Add position tracking to tokens:</strong></p>
+<pre>
+type Token struct {
+    Type    TokenType
+    Literal string
+    Line    int
+    Column  int
+}
+
+// In Lexer:
+type Lexer struct {
+    input        string
+    position     int
+    readPosition int
+    ch           byte
+    line         int
+    column       int
+}
+
+func (l *Lexer) readChar() {
+    if l.readPosition >= len(l.input) {
+        l.ch = 0
+    } else {
+        l.ch = l.input[l.readPosition]
+    }
+    
+    l.position = l.readPosition
+    l.readPosition++
+    
+    if l.ch == '\n' {
+        l.line++
+        l.column = 0
+    } else {
+        l.column++
+    }
+}
+
+// In NextToken():
+tok = Token{
+    Type:    PLUS,
+    Literal: string(l.ch),
+    Line:    l.line,
+    Column:  l.column,
+}
+</pre>
+
+<p><strong>Better error messages:</strong></p>
+<pre>
+type ParseError struct {
+    Message string
+    Token   Token
+}
+
+func (e *ParseError) Error() string {
+    return fmt.Sprintf("line %d, col %d: %s (near '%s')",
+        e.Token.Line, e.Token.Column, e.Message, e.Token.Literal)
+}
+
+// In parser:
+if p.current.Type != RPAREN {
+    return nil, &ParseError{
+        Message: "expected closing parenthesis",
+        Token:   p.current,
+    }
+}
+</pre>
+
+<h3>Complete Advanced Calculator</h3>
+
+<p>With all these features, you now have:</p>
+<ul>
+<li>Variables: <code>x = 10</code></li>
+<li>Functions: <code>sin(30)</code>, <code>sqrt(16)</code></li>
+<li>Comparisons: <code>5 > 3</code></li>
+<li>Exponentiation: <code>2 ^ 8</code></li>
+<li>Unary operators: <code>-x</code></li>
+<li>Complex expressions: <code>area = 3.14159 * radius ^ 2</code></li>
+</ul>
+
+<pre>
+>> radius = 5
+= 5
+>> area = 3.14159 * radius ^ 2
+= 78.53975
+>> circumference = 2 * 3.14159 * radius
+= 31.4159
+>> sqrt(area)
+= 8.862269254527579
+>> sin(30) + cos(60)
+= 1
+>> x = 10
+= 10
+>> y = 20
+= 20
+>> result = (x + y) * 2 ^ 3
+= 240
+>> result > 200
+= 1
+</pre>
+
+</div>
+
+<div class="section" id="key-patterns">
+<h1>Key Patterns and Best Practices</h1>
+
+<h3>1. Token Design</h3>
+<div class="note">
+<strong>Always separate type from literal.</strong> The type tells you WHAT it is (number, operator, keyword). The literal tells you the actual text. This separation is crucial for processing.
+</div>
+
+<h3>2. Lexer Position Tracking</h3>
+<div class="note">
+<strong>Use two positions: current and next.</strong> This pattern (position/readPosition) lets you peek ahead without moving, essential for multi-character tokens and disambiguation.
+</div>
+
+<h3>3. Parser Precedence</h3>
+<div class="note">
+<strong>Low precedence calls high precedence.</strong> This is the golden rule. Addition calls multiplication, multiplication calls exponentiation, exponentiation calls primary. This naturally creates correct tree structure.
+</div>
+
+<h3>4. Right-Associativity</h3>
+<div class="note">
+<strong>To make operator right-associative, recursively call yourself instead of next level.</strong> Normal: <code>right = p.parseNextLevel()</code>. Right-assoc: <code>right = p.parseThisLevel()</code>.
+</div>
+
+<h3>5. AST Design</h3>
+<div class="note">
+<strong>Keep nodes generic with Type field.</strong> Don't create separate structs for each node type. One Node struct with Type enum is simpler and more flexible.
+</div>
+
+<h3>6. Evaluator Recursion</h3>
+<div class="note">
+<strong>Trust the recursion.</strong> To evaluate a node, recursively evaluate children first. The AST structure guarantees correct order—you don't need to think about it.
+</div>
+
+<h3>7. Error Handling</h3>
+<div class="note">
+<strong>Return errors, don't panic.</strong> Every function that can fail should return <code>(result, error)</code>. Let the caller decide how to handle errors. This makes testing and debugging much easier.
+</div>
+
+<h3>8. Testing Strategy</h3>
+<div class="note">
+<strong>Test each stage independently.</strong> Unit test lexer (input → tokens). Unit test parser (tokens → AST). Unit test evaluator (AST → result). Then integration test the pipeline.
+</div>
+
+</div>
+
+<div class="section" id="next-steps">
+<h1>Next Steps and Further Learning</h1>
+
+<h3>Extend Your Interpreter</h3>
+
+<p><strong>Control Flow (If Statements):</strong></p>
+<ul>
+<li>Add IF, ELSE tokens</li>
+<li>Parser creates conditional node with condition, thenBranch, elseBranch</li>
+<li>Evaluator checks condition, executes appropriate branch</li>
+</ul>
+
+<p><strong>Loops (While/For):</strong></p>
+<ul>
+<li>Add WHILE, FOR tokens</li>
+<li>Parser creates loop node with condition and body</li>
+<li>Evaluator repeatedly evaluates body while condition is true</li>
+</ul>
+
+<p><strong>User-Defined Functions:</strong></p>
+<ul>
+<li>Add FN, RETURN tokens</li>
+<li>Parser creates function definition node with parameters and body</li>
+<li>Store functions in environment, call them like built-ins</li>
+</ul>
+
+<p><strong>Arrays and Data Structures:</strong></p>
+<ul>
+<li>Add LBRACKET, RBRACKET tokens</li>
+<li>Parser creates array literal node and index access node</li>
+<li>Evaluator uses Go slices/maps to store collections</li>
+</ul>
+
+<h3>Optimization Techniques</h3>
+
+<p><strong>Constant Folding:</strong></p>
+<p>During parsing, if you see two number literals with an operator, compute the result immediately. <code>2 + 3</code> becomes just <code>5</code> in the AST.</p>
+
+<p><strong>AST Node Pooling:</strong></p>
+<p>Use sync.Pool to reuse AST nodes instead of allocating new ones each time. This reduces GC pressure.</p>
+
+<p><strong>Bytecode Compilation:</strong></p>
+<p>Instead of walking the AST every time, compile it to bytecode once, then execute the bytecode. Much faster for repeated execution.</p>
+
+<h3>Recommended Resources</h3>
+
+<ul>
+<li><strong>"Writing An Interpreter In Go" by Thorsten Ball</strong> - The definitive guide, builds a complete language</li>
+<li><strong>"Crafting Interpreters" by Robert Nystrom</strong> - Two interpreters (tree-walk and bytecode), excellent explanations</li>
+<li><strong>"Engineering a Compiler" by Cooper & Torczon</strong> - Academic but comprehensive</li>
+<li><strong>Dragon Book</strong> - Classic compiler design textbook</li>
+</ul>
+
+<h3>Common Pitfalls to Avoid</h3>
+
+<ol>
+<li><strong>Not handling whitespace:</strong> Always skip whitespace in lexer before processing tokens</li>
+<li><strong>Wrong precedence order:</strong> Remember: lower precedence functions call higher precedence functions</li>
+<li><strong>Forgetting to advance position:</strong> After creating a token, always call readChar() or nextToken()</li>
+<li><strong>Not checking EOF:</strong> Always check if you've reached end of input to avoid panics</li>
+<li><strong>Poor error messages:</strong> Include position information and context in all error messages</li>
+<li><strong>Mixing concerns:</strong> Keep lexer, parser, and evaluator separate. Don't evaluate in parser.</li>
+</ol>
+
+</div>
+
+<div class="section" id="conclusion">
+<h1>Conclusion</h1>
+
+<p>You now understand the fundamental architecture of interpreters and compilers:</p>
+
+<div class="step">
+<strong>Lexer</strong> breaks text into tokens (words)<br>
+<strong>Parser</strong> builds structure from tokens (sentences)<br>
+<strong>Evaluator</strong> executes the structure (meaning)
+</div>
+
+<p>This three-stage pipeline is used in:</p>
+<ul>
+<li>Programming languages (Python, JavaScript, Go itself)</li>
+<li>Database query engines (SQL)</li>
+<li>Configuration file processors (JSON, YAML)</li>
+<li>Template engines (HTML templating)</li>
+<li>Command-line tools (shell scripting)</li>
+</ul>
+
+<div class="important">
+<strong>The key insight:</strong> Each stage has ONE job and does it well. This separation makes complex problems manageable. You don't need to understand everything at once—just focus on one stage at a time.
+</div>
+
+<p>The complete code for this tutorial is available as a working Go project. Start with the basic calculator, then add features one at a time. Each addition teaches you something new about language design.</p>
+
+<p><strong>Remember:</strong> Every complex language (Python, JavaScript, Java) is built using these exact same principles. They just have more tokens, more node types, and more evaluation rules. The fundamental architecture is identical.</p>
+
+<p>Now go build something!</p>
+
+</div>
+
+<div style="margin-top:60px;border-top:2px solid #000;padding-top:20px;text-align:center;font-size:10pt;color:#666">
+<p>Building a Lexer, Parser & Interpreter from Scratch</p>
+<p>A Complete Tutorial in Go • Total Pages: ~25 when printed</p>
+</div>
+
+</body>
+</html>

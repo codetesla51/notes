@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go-Git: Comprehensive Learning Notes</title>
+    <style>
+body{font-family:Georgia,serif;background:#fff;color:#000;max-width:900px;margin:0 auto;padding:40px 20px;line-height:1.6}h1{font-size:28pt;margin:40px 0 10px;border-bottom:3px solid #000;padding-bottom:10px}h2{font-size:20pt;margin:35px 0 15px;border-bottom:2px solid #000;padding-bottom:8px;page-break-after:avoid}h3{font-size:14pt;margin:20px 0 8px;font-weight:bold;page-break-after:avoid}p{margin:0 0 12px 0}pre{background:#f9f9f9;border:1px solid #ccc;padding:12px;margin:12px 0;font-size:10pt;overflow-x:auto;page-break-inside:avoid;font-family:monospace}code{font-family:monospace;background:#f2f2f2;padding:2px 4px;font-size:10pt}.concept{margin:16px 0;padding:12px;border-left:4px solid #333;page-break-inside:avoid}.concept-title{font-weight:bold;font-size:11pt;margin-bottom:4px}.concept-what{margin:4px 0;font-size:10pt}.concept-why{margin:4px 0;font-size:10pt}.concept-insight{margin:4px 0;font-size:10pt;font-style:italic}.flow-step{margin:8px 0;font-size:10pt;line-height:1.5}.challenge{margin:16px 0;padding:12px;background:#f5f5f5;page-break-inside:avoid}.challenge-title{font-weight:bold;margin-bottom:4px}.toc{margin:20px 0;padding:20px;background:#f9f9f9;border:1px solid #ccc;page-break-inside:avoid}.toc a{color:#000;text-decoration:none;display:block;margin:4px 0;margin-left:12px}.toc>a{margin-left:0}.toc-main{font-weight:bold;margin:8px 0 4px 0}@media print{body{padding:20px}.no-print{display:none}h1,h2,h3{page-break-after:avoid}pre{page-break-inside:avoid;border:1px solid #999}.concept{page-break-inside:avoid}.challenge{page-break-inside:avoid}.toc{page-break-inside:avoid}}button{position:fixed;top:20px;right:20px;padding:10px 20px;background:#000;color:#fff;border:none;cursor:pointer;font-size:12pt;z-index:1000}@media print{button{display:none}}.metric{font-weight:bold;color:#333}
+    </style>
+</head>
+<body>
+<button onclick="window.print()" class="no-print">Print to PDF</button>
+
+<h1>Go-Git: Learning Notes</h1>
+<p><strong>A Git Implementation Built from First Principles in Go</strong></p>
+<p style="margin-bottom:30px;font-size:11pt;color:#666;">Comprehensive reference for understanding distributed version control, content-addressable storage, and the Git object model.</p>
+
+<div class="toc">
+    <div class="toc-main">Quick Navigation</div>
+    <a href="#overview">Project Overview</a>
+    <a href="#concepts">Core Concepts</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#features">Key Features</a>
+    <a href="#flow">Example Flow</a>
+    <a href="#challenges">Interesting Challenges</a>
+    <a href="#interview">Interview Talking Points</a>
+    <a href="#glossary">Glossary</a>
+</div>
+
+<!-- ========== A. PROJECT OVERVIEW ========== -->
+<h2 id="overview">A. Project Overview</h2>
+
+<p>Go-Git is a Git implementation built from scratch in Go, containing no external Git libraries—everything from hashing to object storage is custom code. The project demonstrates how distributed version control works by implementing Git's core data structures: content-addressable storage (SHA-256 hashing), a three-tree architecture (working directory, staging area, repository), and commit graphs.</p>
+
+<p>The problem it solves: Most developers use Git daily but don't understand how it actually works. By building Git from first principles, this project reveals why commits are cheap, how deduplication works, and what "content-addressable storage" really means in practice.</p>
+
+<p><strong>Architecture in 5 points:</strong></p>
+<div style="margin-left:20px;font-size:11pt;line-height:1.8;">
+• <strong>Content-Addressable Storage:</strong> Every object (file, directory, commit) stored by SHA-256 hash, enabling automatic deduplication<br>
+• <strong>Three-Tree Model:</strong> Working directory → Staging area (index) → Repository (.git/objects), matching Git's internal model<br>
+• <strong>Tree Objects:</strong> Directories represented as tree objects that reference child trees by hash (built bottom-up)<br>
+• <strong>Commit Graph:</strong> Commits are metadata + tree pointer + parent pointer, forming a directed acyclic graph<br>
+• <strong>Compression:</strong> All objects compressed with zlib (~60-70% size reduction), matching Git's format
+</div>
+
+<!-- ========== B. CORE CONCEPTS ========== -->
+<h2 id="concepts">B. Core Concepts</h2>
+
+<div class="concept">
+    <div class="concept-title">SHA-256 Content-Addressable Storage</div>
+    <div class="concept-what"><strong>What:</strong> Files/objects identified and located by their SHA-256 hash, not filename or path</div>
+    <div class="concept-why"><strong>Why:</strong> Same content always produces same hash. Store README.md 100 times, uses disk space once. Deduplication is automatic.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> Hash = file address. You never need to ask "where is this content stored?"—the hash tells you. Different from traditional filesystems that use paths.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">The Three-Tree Architecture</div>
+    <div class="concept-what"><strong>What:</strong> Git tracks files through three conceptual trees: working directory (your files) → staging area (.git/index) → repository (.git/objects)</div>
+    <div class="concept-why"><strong>Why:</strong> Allows partial commits. You can stage some files (moving them to the staging area) without committing everything. Staging area decouples "what I've edited" from "what I'm ready to commit."</div>
+    <div class="concept-insight"><strong>Key insight:</strong> This is Git's most powerful design choice. It's why `git add` exists as a separate step. Most VCS systems don't have a staging area.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">Tree Objects (Bottom-Up Construction)</div>
+    <div class="concept-what"><strong>What:</strong> Directories represented as tree objects. A tree object contains entries: filename, hash, mode (file vs directory)</div>
+    <div class="concept-why"><strong>Why:</strong> Enables efficient snapshots. A commit points to one tree (the root). That tree references subtrees. If a directory didn't change, its tree hash stays the same—no need to rebuild.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> Trees must be built deepest-first. You can't create a parent tree until you have child tree hashes. This bottom-up order was the hardest part to implement.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">Blobs (File Objects)</div>
+    <div class="concept-what"><strong>What:</strong> A blob is a file's content with a header: <code>blob &lt;size&gt;\0&lt;content&gt;</code></div>
+    <div class="concept-why"><strong>Why:</strong> Standardized format makes hashing consistent. The header includes object type and size so Git can validate integrity.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> The null byte (\0) separates header from content. This lets Git distinguish metadata from data without parsing complexity.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">Commit Objects</div>
+    <div class="concept-what"><strong>What:</strong> A commit is metadata + pointers: tree hash (what changed), parent hash (previous commit), author, timestamp, message</div>
+    <div class="concept-why"><strong>Why:</strong> Commits are tiny (just pointers). Creating a commit doesn't copy files—it just points to an existing tree. This is why Git commits are instant even for large repos.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> Commits form a DAG (directed acyclic graph). Each commit points to its parent(s). Following parent pointers backward gives you history. No timestamp needed for ordering—the chain itself is the order.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">Binary Hash Encoding in Trees</div>
+    <div class="concept-what"><strong>What:</strong> Tree objects store hashes as 32 binary bytes, not 64-character hex strings</div>
+    <div class="concept-why"><strong>Why:</strong> Efficiency. Binary is half the size of hex. Git prioritizes disk/memory efficiency everywhere.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> This must be decoded with <code>hex.DecodeString()</code> before appending. Storing hex strings in trees breaks everything—subtle bug, hard to debug.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">zlib Compression</div>
+    <div class="concept-what"><strong>What:</strong> All Git objects (blobs, trees, commits) are compressed with zlib before storage</div>
+    <div class="concept-why"><strong>Why:</strong> Objects compress 60-70% because they contain repeated patterns (hashes, filenames, metadata). Saves significant disk space.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> Compression is applied to object bytes before hashing and storage. Every read from disk must decompress. This is why direct binary inspection of .git/objects/ shows gibberish.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">Staging Area (Index) Format</div>
+    <div class="concept-what"><strong>What:</strong> Simple text file: <code>&lt;mode&gt; &lt;hash&gt; &lt;path&gt;</code>, one entry per line</div>
+    <div class="concept-why"><strong>Why:</strong> Fast to scan. When you commit, iterate through index once to build tree objects. No need to re-hash already-staged files.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> Real Git stores index as binary format with metadata (timestamps, file sizes). This implementation uses plain text for simplicity. Same functionality, worse performance at scale.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">Branch Pointers (Refs)</div>
+    <div class="concept-what"><strong>What:</strong> A branch is just a text file containing a commit hash. <code>.git/refs/heads/main</code> contains the hash of the latest commit on main</div>
+    <div class="concept-why"><strong>Why:</strong> Branches are free. Creating a branch is just writing a hash to a file. Moving a branch is overwriting one line.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> This is why branching is Git's killer feature. In older VCS systems (SVN), branching meant copying entire directory trees. In Git, it's one pointer update.</div>
+</div>
+
+<div class="concept">
+    <div class="concept-title">HEAD Pointer</div>
+    <div class="concept-what"><strong>What:</strong> A reference file at .git/HEAD pointing to the current branch: <code>ref: refs/heads/main</code></div>
+    <div class="concept-why"><strong>Why:</strong> Git needs to know which branch you're on. When you commit, Git reads HEAD to find the current branch, then updates that branch's ref to the new commit hash.</div>
+    <div class="concept-insight"><strong>Key insight:</strong> HEAD can also point directly to a commit (detached HEAD state). Same indirection—if HEAD points to a branch, follow the branch to get the commit. If it points to a commit directly, use that.</div>
+</div>
+
+<!-- ========== C. ARCHITECTURE ========== -->
+<h2 id="architecture">C. Architecture Overview</h2>
+
+<h3>Program Flow</h3>
+
+<p><strong>Entry Point:</strong> <code>main.go</code> calls <code>cmd.Cli()</code>, which uses Cobra to parse command-line arguments. Each command (init, add, commit, log, config) is a separate handler.</p>
+
+<p><strong>Initialization Flow:</strong></p>
+<div style="margin-left:20px;font-size:11pt;line-height:1.8;">
+1. <code>go-git init</code> creates .git directory structure: objects/, refs/heads/, HEAD, config<br>
+2. Sets HEAD to point to refs/heads/main (the default branch)<br>
+3. Initializes empty config file (filled in later with user identity)
+</div>
+
+<p><strong>Add Flow:</strong></p>
+<div style="margin-left:20px;font-size:11pt;line-height:1.8;">
+1. User runs <code>go-git add file.txt</code><br>
+2. For each file: read content → create blob object → hash it → store in .git/objects/<br>
+3. Load existing index from .git/index (or create empty map)<br>
+4. Add entry: path → hash mapping to index<br>
+5. Write index back to disk
+</div>
+
+<p><strong>Commit Flow:</strong></p>
+<div style="margin-left:20px;font-size:11pt;line-height:1.8;">
+1. User runs <code>go-git commit -m "message"</code><br>
+2. Read index from .git/index<br>
+3. Build tree objects bottom-up (trees.go: WriteTree)<br>
+4. Create commit object pointing to root tree hash + parent commit<br>
+5. Hash commit object, store in .git/objects/<br>
+6. Update .git/refs/heads/main with new commit hash
+</div>
+
+<p><strong>Log Flow:</strong></p>
+<div style="margin-left:20px;font-size:11pt;line-height:1.8;">
+1. Read .git/refs/heads/main → get latest commit hash<br>
+2. Load commit object from .git/objects/, decompress it<br>
+3. Parse commit metadata (author, timestamp, message)<br>
+4. Extract parent hash from commit<br>
+5. Repeat step 2-4 with parent hash until no parent exists
+</div>
+
+<h3>Key Data Structures</h3>
+
+<p><strong>IndexEntry (staging area entry):</strong> Tracks a staged file: filename (path), hash (blob hash), mode (100644 for regular files). Simple, matches text index format.</p>
+
+<p><strong>Entry (tree entry):</strong> Component of a tree object: filename, BlobHash (could be blob or tree hash), FileMode (100644 for files, 040000 for directories). The FileMode distinction is critical—Git uses it to know whether an entry points to a blob or subtree.</p>
+
+<p><strong>Object Format (universal):</strong> All objects follow pattern: <code>&lt;type&gt; &lt;size&gt;\0&lt;content&gt;</code>. Type is "blob", "tree", or "commit". Size is content length in bytes. Null byte separates header from content. This standardization means the same hashing/storage code works for all object types.</p>
+
+<h3>Component Interaction</h3>
+
+<p>When you <code>commit</code>: cmd.go calls objects.GitCommit() → calls objects.WriteTree() (which reads .git/index and builds trees bottom-up) → calls internals.Hash() (which compresses and stores object, returns hash) → calls internals.CommitTree() to create commit object → WriteTree() and CommitTree() both call Hash() → GitCommit() updates .git/refs/heads/main with final commit hash.</p>
+
+<p>Central hub is <code>internals/hash.go:Hash()</code>—every object creation flows through this function. It handles compression, directory creation, and deduplication (skips writing if object already exists).</p>
+
+<!-- ========== D. KEY FEATURES ========== -->
+<h2 id="features">D. Key Features</h2>
+
+<h3>1. Content-Addressable Object Storage</h3>
+
+<p><strong>What:</strong> Objects stored by SHA-256 hash at .git/objects/XX/YYYYYY... (first 2 chars as folder, rest as filename). Hash = address.</p>
+
+<p><strong>Why it matters:</strong> Automatic deduplication is built-in. If two commits contain the same file, it's stored once. Saves enormous amounts of disk space—crucial for large repos with history.</p>
+
+<p><strong>How it works:</strong> (1) Compute SHA-256 of object content. (2) Create directory .git/objects/XX/ where XX is first 2 hash chars. (3) Store compressed object at .git/objects/XX/YYYYYY. (4) If object already exists, skip write (deduplication). (5) Return hash as object identifier.</p>
+
+<p><strong>The clever part:</strong> The hash is both the content identifier AND the filesystem address. You never need a database or lookup table. Same content always produces same hash—you can verify integrity instantly by re-hashing.</p>
+
+<h3>2. Three-Tree Staging Architecture</h3>
+
+<p><strong>What:</strong> Separation of concerns: working directory (your edits) → staging area .git/index (what you've chosen to commit) → repository .git/objects (committed snapshots).</p>
+
+<p><strong>Why it matters:</strong> Enables selective commits. Edit 5 files, stage 3, commit only those 3. The staging area is the "prepare for commit" step.</p>
+
+<p><strong>How it works:</strong> (1) <code>go-git add file.txt</code> reads file, creates blob, updates .git/index with path → hash entry. (2) <code>go-git commit</code> reads .git/index, builds tree objects from staged entries, creates commit pointing to root tree. (3) Working directory is independent—if you edit a file after staging, the working copy differs from the index.</p>
+
+<p><strong>The clever part:</strong> The staging area decouples "what I've edited" from "what I'm committing." Most VCS systems commit everything or nothing. Git lets you commit exactly what you want.</p>
+
+<h3>3. Bottom-Up Tree Object Building</h3>
+
+<p><strong>What:</strong> Directory structures represented as nested tree objects, built from deepest directories first, so parent trees can reference child tree hashes.</p>
+
+<p><strong>Why it matters:</strong> Enables efficient snapshots. If src/lib/ didn't change since the last commit, its tree hash is identical. Parent trees can reference the same hash—no rebuild needed.</p>
+
+<p><strong>How it works:</strong> (1) Read .git/index: extract all staged file paths. (2) Group by directory. (3) Sort directories by depth (deepest first). (4) For each directory bottom-up: collect file blobs + already-built subtrees (by checking if subdir parent is current dir). Sort entries. (5) Build tree object: mode + name + null byte + binary hash for each entry. Prepend "tree &lt;size&gt;\0" header. Hash it. Store. (6) Record tree hash in map for parent directory to reference.</p>
+
+<p><strong>The clever part:</strong> Sorting by depth ensures you never reference a tree that hasn't been built yet. The recursion is implicit in the sorting order.</p>
+
+<h3>4. Commit Chain (DAG) for History</h3>
+
+<p><strong>What:</strong> Each commit points to its parent commit (and parent points to its parent, etc.). Forms a directed acyclic graph. No timestamps needed—the chain itself is the temporal order.</p>
+
+<p><strong>Why it matters:</strong> History is permanent and verifiable. Every commit cryptographically depends on its parent (parent hash is part of commit content). Changing history would require re-hashing all subsequent commits—immediately detected.</p>
+
+<p><strong>How it works:</strong> (1) <code>go-git commit</code> reads .git/refs/heads/main to get current commit hash (the parent). (2) CommitTree() includes "parent &lt;hash&gt;" line in commit object. (3) Hash this commit object → new commit hash. (4) Update .git/refs/heads/main to point to new commit. (5) Next commit's parent will be this commit's hash.</p>
+
+<p><strong>The clever part:</strong> The chain is bidirectional only in memory. On disk, commits only know their parents. You can traverse forward by following parent pointers backward. Branching is just parallel chains that can be merged.</p>
+
+<h3>5. User Configuration Persistence</h3>
+
+<p><strong>What:</strong> User name and email stored in .git/config, read on each commit and embedded in commit metadata.</p>
+
+<p><strong>Why it matters:</strong> Commits are attributed. You know who made each change (for blame, review, accountability).</p>
+
+<p><strong>How it works:</strong> (1) <code>go-git config</code> prompts for name and email. (2) Writes to .git/config: [user] section with name and email keys. (3) On commit, ReadConfig() parses .git/config and extracts values. (4) CommitTree() formats author line: "name &lt;email&gt; timestamp timezone". (5) Included in commit object.</p>
+
+<p><strong>The clever part:</strong> Per-repo config. Different repos can have different author identities. No global state.</p>
+
+<h3>6. zlib Compression for Storage Efficiency</h3>
+
+<p><strong>What:</strong> All objects (blobs, trees, commits) compressed with zlib before storage. Decompressed on read.</p>
+
+<p><strong>Why it matters:</strong> 60-70% size reduction. Git objects contain repetitive patterns—hashes, filenames, metadata. Compression pays off.</p>
+
+<p><strong>How it works:</strong> (1) In Hash(): create object string (e.g., "blob 1024\0..."). (2) Create zlib.Writer. (3) Write object to writer → compresses. (4) Write compressed bytes to disk. (5) On read (log.go): Read compressed file from disk. (6) Create zlib.Reader. (7) Decompress → get original object string. (8) Parse.</p>
+
+<p><strong>The clever part:</strong> Same compression algorithm as real Git. Binary compatibility (real Git can read objects from this implementation).</p>
+
+<!-- ========== E. FLOW EXAMPLE ========== -->
+<h2 id="flow">E. Example Flow: Adding and Committing a File</h2>
+
+<p><strong>Scenario:</strong> User creates README.md with "Hello World" and commits it.</p>
+
+<div class="flow-step"><strong>Step 1:</strong> User runs <code>go-git add README.md</code>. The add command calls <code>index.GitAdd(["README.md"])</code>.</div>
+
+<div class="flow-step"><strong>Step 2:</strong> GitAdd loads .git/index (empty on first add, returns empty map). For each file, calls addFileToIndex().</div>
+
+<div class="flow-step"><strong>Step 3:</strong> addFileToIndex calls objects.WriteBlob("README.md"). WriteBlob reads file content ("Hello World"), formats as blob: "blob 11\0Hello World", calls internals.Hash().</div>
+
+<div class="flow-step"><strong>Step 4:</strong> Hash() computes SHA-256 of blob string → hash "abc123...". Creates .git/objects/ab/ directory. Compresses blob with zlib. Writes compressed bytes to .git/objects/ab/c123.... Returns hash.</div>
+
+<div class="flow-step"><strong>Step 5:</strong> addFileToIndex adds entry to index map: "README.md" → {Filename: "README.md", Hash: "abc123...", Mode: "100644"}. GitAdd saves index map to .git/index (text format: "100644 abc123... README.md").</div>
+
+<div class="flow-step"><strong>Step 6:</strong> User runs <code>go-git commit -m "Initial commit"</code>. objects.GitCommit("Initial commit") is called.</div>
+
+<div class="flow-step"><strong>Step 7:</strong> GitCommit calls objects.WriteTree(). WriteTree reads .git/index, finds one entry: README.md → abc123. Groups by directory (empty string = root). No subdirectories, so only one tree to build: the root.</div>
+
+<div class="flow-step"><strong>Step 8:</strong> WriteTree builds root tree object: creates Entry with Filename "README.md", BlobHash "abc123...", FileMode "100644". Formats as "100644 README.md\0" + binary hash (32 bytes). Prepends "tree 41\0" header. Calls Hash()</div>
+
+<div class="flow-step"><strong>Step 9:</strong> Hash() computes tree hash "def456..." and stores compressed tree object. Returns hash.</div>
+
+<div class="flow-step"><strong>Step 10:</strong> WriteTree returns "def456..." (root tree hash). GitCommit reads .git/refs/heads/main (empty on first commit, no parent). Calls CommitTree("def456...", "", "Initial commit").</div>
+
+<div class="flow-step"><strong>Step 11:</strong> CommitTree builds commit object: "tree def456\nauthor Uthman &lt;email&gt; 1234567890 +0000\ncommitter ...\n\nInitial commit\n". Note: no parent line because this is first commit. Calls Hash().</div>
+
+<div class="flow-step"><strong>Step 12:</strong> Hash() computes commit hash "ghi789..." and stores compressed commit object. Returns hash.</div>
+
+<div class="flow-step"><strong>Step 13:</strong> GitCommit writes "ghi789..." to .git/refs/heads/main. Commit complete.</div>
+
+<div class="flow-step"><strong>Step 14:</strong> User runs <code>go-git log</code>. GitLog reads .git/refs/heads/main → "ghi789...". Loads compressed commit object from .git/objects/gh/i789..., decompresses, parses tree/author/message. Prints commit info. Extracts parent (none), so stops.</div>
+
+<!-- ========== F. INTERESTING CHALLENGES ========== -->
+<h2 id="challenges">F. Interesting Challenges</h2>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 1: Bottom-Up Tree Building</div>
+    
+    <p><strong>The problem:</strong> How do you build a tree for a directory when it contains subdirectories? You need child tree hashes to include them in the parent tree, but you haven't built child trees yet.</p>
+    
+    <p><strong>Why it was hard:</strong> Initial instinct: recursion. Build tree for src/ → recursively build tree for src/lib/ → done. But recursion doesn't give you control over order. You'd start top-down, but you need bottom-up. The order is inverted from typical directory traversal.</p>
+    
+    <p><strong>The solution:</strong> Sort directories by depth (count slashes). Build deepest directories first. For each directory, check which already-built trees are its children (parent dir check: filepath.Dir(subdir) == currentDir). Include child trees as entries with mode "040000". This ensures you always have child hashes before building parents.</p>
+    
+    <p><strong>Impact:</strong> Solved in Go using sort.Slice with a depth comparator. Code is clean and efficient. Taught lesson: order matters when building hierarchical structures. Recursive thinking doesn't always work—sometimes you need explicit ordering.</p>
+</div>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 2: Binary Hash Encoding in Trees</div>
+    
+    <p><strong>The problem:</strong> Tree objects store hashes in binary format (32 bytes), not hex strings (64 chars). But hashes are computed as hex strings. Do you store hex or convert to binary?</p>
+    
+    <p><strong>Why it was hard:</strong> Real Git uses binary. This implementation initially stored hex. Trees worked but were double the size. Took an hour to debug because: (1) Trees still read/parsed OK (hex still parses as bytes). (2) Error was subtle—not an immediate crash. (3) Only visible when comparing tree object sizes with real Git.</p>
+    
+    <p><strong>The solution:</strong> Use hex.DecodeString(hashHex) → get 32 binary bytes. Append binary bytes to tree content, not hex string. Do this for every hash included in a tree object.</p>
+    
+    <p><strong>Impact:</strong> Trees now 50% smaller. Binary compatibility with real Git. Lesson: match the spec exactly, even for "minor" details. Format details have cascading effects (size, correctness, compatibility).</p>
+</div>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 3: Excluding .git/ from Staging</div>
+    
+    <p><strong>The problem:</strong> When user runs <code>go-git add .</code>, you want to recursively add all files, but exclude .git/ directory itself (it's metadata, not content). How do you skip .git/ without accidentally excluding files that happen to contain "git" in their name?</p>
+    
+    <p><strong>Why it was hard:</strong> First attempt: check if path contains ".git". Failed—excluded "my.git.file". Need exact directory match, not substring.</p>
+    
+    <p><strong>The solution:</strong> Use filepath.WalkDir with filepath.SkipDir. In the walk callback, check if d.Name() == ".git" && d.IsDir(). If true, return filepath.SkipDir—tells WalkDir to skip this directory and all its children without descending.</p>
+    
+    <p><strong>Impact:</strong> Clean exclusion logic. Go's filepath package provides exactly the right tool. Lesson: don't reinvent path manipulation. Standard library usually has the right abstraction.</p>
+</div>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 4: Stable Object Hashing</div>
+    
+    <p><strong>The problem:</strong> Hashes must be reproducible. Same content must always produce same hash. But subtle changes break this: extra whitespace, different byte order, object type vs size separator.</p>
+    
+    <p><strong>Why it was hard:</strong> Object format has strict rules. "blob 11\0..." vs "blob 11 ..." (space instead of null byte) produces different hashes. Entry order in trees matters—Git sorts entries alphabetically. Different order = different hash.</p>
+    
+    <p><strong>The solution:</strong> (1) Exactly match Git object format: type, space, size, null byte, content. (2) In WriteTree, sort entries alphabetically before building tree. (3) For trees containing both files and subdirs, sort together (both Filename fields). (4) Use consistent timestamp format (Unix timestamp, not formatted date).</p>
+    
+    <p><strong>Impact:</strong> Hashes match real Git exactly. Tests verify by creating same file, comparing hash with real Git. Determinism is foundational—everything depends on it.</p>
+</div>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 5: Compression Without Breaking Hashes</div>
+    
+    <p><strong>The problem:</strong> Objects are compressed with zlib before storage. But the hash must be computed on the uncompressed object, not the compressed bytes. Otherwise, hashes would be non-deterministic (compression output varies slightly).</p>
+    
+    <p><strong>Why it was hard:</strong> Seems backwards. You hash, then compress, then store. But you must verify: hash the uncompressed object, use that hash as the address, then compress for storage. Reading requires the reverse: decompress, then hash to verify.</p>
+    
+    <p><strong>The solution:</strong> Hash() function: (1) Compute SHA-256 of object string (uncompressed). (2) Use hash as .git/objects address. (3) Compress object string with zlib. (4) Write compressed bytes to disk. On read: (1) Load compressed bytes. (2) Decompress with zlib. (3) Hash to verify (optional, for integrity). (4) Parse uncompressed object.</p>
+    
+    <p><strong>Impact:</strong> Objects are stored compressed (saves 60-70% space) but hashes are computed on uncompressed content (ensures determinism). Lesson: separation of concerns—hashing and compression are independent operations that must be ordered correctly.</p>
+</div>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 6: Index Persistence Across Operations</div>
+    
+    <p><strong>The problem:</strong> The staging area (.git/index) must persist between commands. If you `add` files, the index is saved. If you `commit`, it reads that saved index. But if you `add` again, it must read the old index, append new entries, and save. Not overwrite.</p>
+    
+    <p><strong>Why it was hard:</strong> Easy to accidentally overwrite. Must load index, modify, save. Load must handle "index doesn't exist yet" (return empty map). Modify must preserve existing entries.</p>
+    
+    <p><strong>The solution:</strong> LoadIndex() opens .git/index, reads line by line, builds map[path]IndexEntry. If file doesn't exist, return empty map (not an error). GitAdd loads, adds entries, saves. Entries are keyed by path—re-adding same file updates its hash (replace in map). Save iterates map, writes path → hash lines.</p>
+    
+    <p><strong>Impact:</strong> Index grows as you stage files. Survives until commit (commit builds tree from index). After commit, index typically stays (ready for next staging cycle). Could be cleared on commit, but Git doesn't—index persists.</p>
+</div>
+
+<div class="challenge">
+    <div class="challenge-title">Challenge 7: Head and Branch Pointer Indirection</div>
+    
+    <p><strong>The problem:</strong> HEAD points to a branch (e.g., "ref: refs/heads/main"). The branch file contains a commit hash. On commit, you need to update the branch, not HEAD. But to know which branch to update, you must read HEAD, resolve it, then update that branch.</p>
+    
+    <p><strong>Why it was hard:</strong> Two levels of indirection. HEAD → branch → commit. You can't just write to HEAD. You must follow the reference chain.</p>
+    
+    <p><strong>The solution:</strong> In GitCommit: (1) Read .git/HEAD → "ref: refs/heads/main" (or could be direct commit hash). (2) If it's a ref, extract the path (refs/heads/main). (3) Read that file → old commit hash (or empty if first commit). (4) After creating new commit, write new commit hash to that file. Don't modify HEAD.</p>
+    
+    <p><strong>Impact:</strong> Branches are branch-agnostic. Commit doesn't care what branch you're on. It just follows HEAD's reference chain and updates the final file. Supports detached HEAD naturally (if HEAD points directly to a commit, update would fail, but current code doesn't support detached HEAD intentionally).</p>
+</div>
+
+<!-- ========== G. INTERVIEW TALKING POINTS ========== -->
+<h2 id="interview">G. Interview Talking Points</h2>
+
+<h3>30-Second Pitch</h3>
+
+<p><strong>Go-Git is a Git implementation built from scratch in pure Go with no external Git libraries.</strong> It demonstrates how distributed version control works by implementing content-addressable storage (SHA-256 hashing), Git's three-tree architecture (working directory, staging area, repository), and commit graphs. The project teaches fundamental concepts—why commits are cheap, how deduplication works automatically, and why branching is fast—by implementing them from first principles rather than using abstractions.</p>
+
+<h3>Technical Highlights</h3>
+
+<p><strong>1. Bottom-Up Tree Building for Snapshot Efficiency</strong><br>
+Challenge: Represent directory structures as nested tree objects, but parent trees reference child tree hashes (which don't exist until children are built).<br>
+Solution: Sort directories by depth, build deepest-first. When building a parent, check if any pre-built trees are its children and include them as entries.<br>
+Result: Efficient snapshots—unchanged directories reuse prior tree hashes. Commit only creates new tree objects for changed directories.</p>
+
+<p><strong>2. Binary Hash Encoding in Trees</strong><br>
+Challenge: Tree objects store hashes as 32-byte binary, not 64-character hex. Subtle format detail with major implications.<br>
+Solution: Convert hex hash to binary using hex.DecodeString() before appending to tree content.<br>
+Result: Trees are 50% smaller than if stored as hex. Binary compatibility with real Git.</p>
+
+<p><strong>3. Deterministic Object Hashing</strong><br>
+Challenge: Same content must always produce identical hash (requirements: exact format, consistent ordering, stable compression).<br>
+Solution: Strict adherence to Git object format (type space size null-byte content), alphabetical sorting of tree entries, consistent timestamp format (Unix epoch).<br>
+Result: Hashes match real Git exactly. Interoperability and testability—can verify against reference implementation.</p>
+
+<p><strong>4. Three-Tree Architecture Implementation</strong><br>
+Challenge: Implement selective commits—user should be able to edit 5 files, stage 3, commit only those 3.<br>
+Solution: Separate staging area (.git/index): `add` moves files from working directory → index, `commit` moves from index → repository. Index persists between commands.<br>
+Result: Full control over what's committed. Enables partial commits without touching working directory.</p>
+
+<h3>Performance Metrics</h3>
+
+<p><strong>Space Efficiency:</strong> zlib compression reduces object size by 60-70%. Content-addressable storage provides automatic deduplication.</p>
+
+<p><strong>Speed Characteristics:</strong> Add is O(n) where n is files in directory. Commit is O(m) where m is staged files (must build trees). Log is O(c) where c is commits (traverse parent chain). All linear, no exponential operations.</p>
+
+<p><strong>Scalability:</strong> Design scales to medium repos. Limitations: no packed objects (each object is a file, hundreds/thousands of small files), plain text index (linear scan on every commit). Real Git packs objects and indexes them. This implementation prioritizes clarity over scale.</p>
+
+<h3>What You'd Improve</h3>
+
+<p><strong>1. Packed Objects:</strong> Instead of one file per object, group objects into pack files with delta compression. Real Git does this after certain thresholds. Reduces object count from thousands to dozens, hugely improves performance.</p>
+
+<p><strong>2. Binary Index Format:</strong> Replace plain text .git/index with binary format. Include metadata (timestamps, file sizes, stat info). Enables faster "status" command (check if file changed without re-reading) and resume interrupted adds.</p>
+
+<p><strong>3. Branch Support:</strong> Add commands to create/delete/switch branches. Currently only main branch exists. Would require: updating HEAD to point to new branch refs, preventing commits when detached, showing current branch in CLI.</p>
+
+<p><strong>Why these matter:</strong> Packed objects would make commits faster (less disk I/O). Binary index would make status queries instant instead of O(files). Branches would make project realistic for multi-feature development.</p>
+
+<h3>Best Technical Problem</h3>
+
+<p><strong>Bottom-up tree building with implicit recursion through sorting.</strong></p>
+
+<p>The problem: Directory structures are recursive—src/lib/ is nested inside src/. When building Git tree objects, you must reference child trees by hash. Parent trees don't exist until children are built. You can't build top-down (you don't have child hashes yet) or bottom-up recursively (recursion hides the order).</p>
+
+<p>The aha moment: Sorting by depth makes the order explicit. Deepest directories first. When you process a directory, all its children have already been processed. Their tree objects exist. You iterate through already-built trees, checking if each is a child (does its parent directory match the current directory?). If yes, include it as a subtree entry.</p>
+
+<p>Why it's elegant: No explicit recursion, no complex traversal. Sort, then iterate. The hierarchy is encoded in the sorting order. This taught me that order and structure are closely related—changing the traversal order can simplify logic dramatically. Often used in compiler construction (topological sort of dependencies) and graph algorithms (DAG processing by topological sort).</p>
+
+<!-- ========== H. GLOSSARY ========== -->
+<h2 id="glossary">H. Quick Glossary</h2>
+
+<p style="font-size:11pt;line-height:1.8;">
+<strong>Blob:</strong> A Git object representing file content. Format: "blob &lt;size&gt;\0&lt;content&gt;". Hashed to get blob hash.<br><br>
+
+<strong>Tree:</strong> A Git object representing a directory. Contains entries: mode (file vs directory), name, hash. Built from blobs and subtrees. Hashed to get tree hash.<br><br>
+
+<strong>Commit:</strong> A Git object representing a snapshot. Contains: tree hash (what), parent hash (history), author, timestamp, message. Hashed to get commit hash.<br><br>
+
+<strong>Commit Hash:</strong> SHA-256 hash of commit object. Used as commit identifier and address in .git/objects/. Immutable—changing commit content changes hash (and breaks history).<br><br>
+
+<strong>Content-Addressable Storage:</strong> Objects identified by hash of content, not by path. Same content always produces same hash. Different from traditional filesystems (which use paths).<br><br>
+
+<strong>DAG (Directed Acyclic Graph):</strong> The structure formed by commits. Each commit points to parent(s). No cycles (can't have commit that's ancestor of itself). Parent pointers form history chain.<br><br>
+
+<strong>Deduplication:</strong> Automatic duplicate removal via content-addressable storage. Store same file 100 times, uses disk space once. Hash collision = same content = one stored copy.<br><br>
+
+<strong>Detached HEAD:</strong> When HEAD points directly to a commit instead of a branch. Commits are still created but not recorded in any branch ref. Would be lost if you switch branches. (Not implemented in this project.)<br><br>
+
+<strong>HEAD:</strong> Reference file (.git/HEAD) pointing to current branch (or commit). When you commit, Git reads HEAD to determine which branch ref to update.<br><br>
+
+<strong>Index:</strong> See "Staging Area".<br><br>
+
+<strong>Object Model:</strong> Git's approach to storage: three object types (blob, tree, commit), all identified by hash, all compressed. The foundation of Git's design.<br><br>
+
+<strong>Ref (Reference):</strong> A text file containing a commit hash. Examples: .git/refs/heads/main (branch), .git/HEAD (current branch). Moving a branch is updating its ref file.<br><br>
+
+<strong>Snapshot:</strong> A complete representation of project state at a commit. In Git, snapshot is a tree object (and all nested tree/blob objects it references). Commits are cheap because they share trees with prior commits.<br><br>
+
+<strong>Staging Area:</strong> Intermediate storage between working directory and repository. User stages files here (.git/index), then commits them. Enables selective commits.<br><br>
+
+<strong>Three-Tree Architecture:</strong> Working directory (your files) → Staging area (.git/index) → Repository (.git/objects/). Allows "prepare then commit" workflow instead of "commit everything or nothing".<br><br>
+
+<strong>Working Directory:</strong> Your actual project files on disk. What you edit. Different from repository (.git/objects/) and staging area (.git/index).<br><br>
+
+<strong>zlib:</strong> Compression algorithm used by Git for object storage. Reduces object size 60-70% by exploiting repeated patterns (hashes, filenames). Decompressed on read.<br><br>
+</p>
+
+<!-- Summary -->
+<h2>Summary: Why This Project Matters</h2>
+
+<p>Go-Git demonstrates that Git isn't magic—it's a well-designed system built on simple primitives: hashing, compression, file storage, and pointer chaining. Understanding Git's internals transforms how you use it. You understand why branching is cheap (just a pointer), why merges are powerful (DAG structure), why history is immutable (cryptographic hashing), and why deduplication works automatically (content-addressable storage).</p>
+
+<p>Building this project teaches: order matters (bottom-up tree building), format details matter (binary hash encoding), standards matter (exact Git format compatibility), and good abstractions matter (three-tree model is elegant despite simplicity).</p>
+
+<p>For interviews: This project shows you understand distributed systems (commit graphs), filesystem design (content-addressable storage), and software architecture (three-tree separation). You can explain non-obvious challenges (tree building, hash encoding, persistence) and solutions clearly. You know Git deeply, not superficially.</p>
+
+</body>
+</html>
