@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenAGI</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #000000;
+            color: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        .welcome-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+            opacity: 1;
+            transition: opacity 0.3s;
+        }
+
+        .welcome-section.hidden {
+            display: none;
+        }
+
+        .welcome-title {
+            font-size: 2rem;
+            font-weight: 400;
+            color: #ffffff;
+            margin-bottom: 3rem;
+            text-align: center;
+        }
+
+        .suggestion-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.8rem;
+            width: 100%;
+            max-width: 600px;
+        }
+
+        .suggestion-btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            padding: 1.2rem;
+            color: #ffffff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 400;
+        }
+
+        .suggestion-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+        }
+
+        .suggestion-icon {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            padding: 1rem 0;
+            display: none;
+        }
+
+        .chat-area.active {
+            display: flex;
+        }
+
+        .message {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            animation: slideIn 0.3s ease;
+        }
+
+        .user-message {
+            justify-content: flex-end;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .user-avatar {
+            background: rgba(100, 100, 255, 0.3);
+            order: 2;
+        }
+
+        .message-content {
+            flex: 1;
+            line-height: 1.6;
+            max-width: 70%;
+        }
+
+        .user-message .message-content {
+            order: 1;
+            text-align: right;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 0.3rem;
+            padding: 0.5rem 0;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+            30% { transform: translateY(-10px); opacity: 1; }
+        }
+
+        .input-container {
+            padding: 1.5rem 0;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 28px;
+            padding: 0.6rem 0.6rem 0.6rem 1.5rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .input-wrapper:focus-within {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .chat-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: #ffffff;
+            font-family: 'Poppins', sans-serif;
+            font-size: 1rem;
+            padding: 0.5rem;
+        }
+
+        .chat-input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .voice-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .voice-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .send-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: none;
+            color: #000000;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .send-btn:active {
+            transform: scale(0.95);
+        }
+
+        @media (max-width: 600px) {
+            .welcome-title {
+                font-size: 1.5rem;
+            }
+            .suggestion-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="welcome-section" id="welcomeSection">
+            <h1 class="welcome-title">What can I help with?</h1>
+            <div class="suggestion-grid">
+                <button class="suggestion-btn" onclick="useSuggestion('Create an image of a futuristic city')">
+                    <div class="suggestion-icon"><i class="fas fa-image"></i></div>
+                    <span>Create image</span>
+                </button>
+                <button class="suggestion-btn" onclick="useSuggestion('Analyze this dataset and find trends')">
+                    <div class="suggestion-icon"><i class="fas fa-chart-line"></i></div>
+                    <span>Analyze data</span>
+                </button>
+                <button class="suggestion-btn" onclick="useSuggestion('Summarize this long article for me')">
+                    <div class="suggestion-icon"><i class="fas fa-file-alt"></i></div>
+                    <span>Summarize text</span>
+                </button>
+                <button class="suggestion-btn" onclick="useSuggestion('Analyze this image and describe what you see')">
+                    <div class="suggestion-icon"><i class="fas fa-eye"></i></div>
+                    <span>Analyze images</span>
+                </button>
+                <button class="suggestion-btn" onclick="useSuggestion('Write a Python function to sort an array')">
+                    <div class="suggestion-icon"><i class="fas fa-code"></i></div>
+                    <span>Code</span>
+                </button>
+                <button class="suggestion-btn" onclick="useSuggestion('Help me plan a project timeline')">
+                    <div class="suggestion-icon"><i class="fas fa-lightbulb"></i></div>
+                    <span>Make a plan</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="chat-area" id="chatArea"></div>
+
+        <div class="input-container">
+            <div class="input-wrapper">
+                <input 
+                    type="text" 
+                    class="chat-input" 
+                    id="userInput" 
+                    placeholder="Ask OpenAGI"
+                >
+                <button class="voice-btn">
+                    <i class="fas fa-microphone"></i>
+                </button>
+                <button class="send-btn" onclick="sendMessage()">
+                    <i class="fas fa-arrow-up"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const responses = {
+            greeting: {
+                patterns: ['hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'sup', 'yo'],
+                replies: [
+                    "Hello! I'm OpenAGI, powered by advanced neural networks trained from scratch. How can I assist you today?",
+                    "Hi there! I'm here to help with reasoning, coding, analysis, and creative tasks. What would you like to explore?",
+                    "Hey! My capabilities span across multiple domains thanks to extensive training. What can I help you with?",
+                    "Greetings! I'm ready to tackle complex problems with my advanced language understanding. How may I assist?"
+                ]
+            },
+            howAreYou: {
+                patterns: ['how are you', 'how do you do', "what's up", 'how you doing'],
+                replies: [
+                    "I'm functioning optimally! My neural networks are ready to assist with any complex task you have in mind.",
+                    "Doing great! All systems are operating smoothly. How can I help you today?",
+                    "Excellent! My training allows me to handle a wide variety of tasks efficiently. What would you like help with?",
+                    "I'm performing well, thank you! Ready to help with whatever you need."
+                ]
+            },
+            capabilities: {
+                patterns: ['what can you do', 'capabilities', 'features', 'able to', 'can you help', 'what do you do'],
+                replies: [
+                    "I can assist with coding, data analysis, creative writing, problem-solving, image analysis, and much more. My training enables me to understand context and provide detailed responses.",
+                    "My capabilities include advanced reasoning, code generation across multiple languages, natural language understanding, analytical tasks, and creative content generation. What specific task do you have?",
+                    "I excel at technical explanations, debugging code, analyzing complex problems, creative writing, and providing structured solutions. I'm built to handle both technical and creative challenges.",
+                    "I can help with programming, mathematical problem-solving, research assistance, content creation, data interpretation, and strategic planning. What would you like to work on?"
+                ]
+            },
+            technical: {
+                patterns: ['how were you built', 'architecture', 'model', 'training', 'parameters', 'built from scratch', 'create you', 'made you'],
+                replies: [
+                    "I was developed using a large-scale neural network trained from the ground up on diverse, high-quality data. The training process involved advanced machine learning techniques and significant computational resources.",
+                    "My architecture is based on transformer models with extensive training across multiple domains. The development process focused on achieving strong reasoning and language understanding capabilities.",
+                    "I'm the result of training a large neural network from scratch, using carefully curated datasets and innovative optimization methods. The goal was to create a highly capable general-purpose AI.",
+                    "My creation involved building and training a neural network using state-of-the-art techniques. The training data spans technical documentation, code, scientific papers, and general knowledge."
+                ]
+            },
+            coding: {
+                patterns: ['code', 'program', 'write', 'develop', 'build app', 'create', 'function', 'algorithm', 'debug', 'python', 'javascript', 'java'],
+                replies: [
+                    "I'd be happy to help with coding! I can work with multiple programming languages and assist with everything from simple functions to complex algorithms. What are you trying to build?",
+                    "Coding is one of my strengths. I can help with design, implementation, debugging, and optimization. Which language and what kind of problem are you working on?",
+                    "I excel at code generation and problem-solving across many programming languages. Whether it's algorithms, data structures, or full applications, I can assist. What do you need?",
+                    "I can help you write, debug, or optimize code. I understand various programming paradigms and can explain concepts clearly. What's your coding challenge?"
+                ]
+            },
+            intelligence: {
+                patterns: ['smart', 'intelligent', 'clever', 'genius', 'brilliant', 'advanced', 'sophisticated', 'impressive'],
+                replies: [
+                    "Thank you! My training on extensive data enables me to understand and respond to complex queries across many domains.",
+                    "I appreciate that! I'm designed to provide thoughtful, accurate responses by leveraging patterns learned during training.",
+                    "Thanks! My goal is to be as helpful as possible by combining broad knowledge with strong reasoning capabilities.",
+                    "That's kind of you! I aim to provide high-quality assistance through careful analysis and comprehensive responses."
+                ]
+            },
+            comparison: {
+                patterns: ['better than', 'vs', 'compared to', 'chatgpt', 'gpt', 'claude', 'gemini', 'other ai', 'competitors'],
+                replies: [
+                    "I'm designed with a focus on accuracy, reasoning depth, and helpful responses. Each AI system has different strengths - I aim to provide reliable, thoughtful assistance.",
+                    "Different AI systems excel in different areas. My training prioritizes understanding context and providing detailed, accurate responses across various domains.",
+                    "I focus on being helpful, accurate, and reliable. Rather than comparing, I'd say each AI has unique characteristics based on its training and design goals.",
+                    "My strength lies in comprehensive reasoning and the ability to handle complex, multi-step problems. I'm built to be a reliable assistant across many tasks."
+                ]
+            },
+            math: {
+                patterns: ['calculate', 'math', 'equation', 'solve', 'number', 'compute', 'formula', 'algebra', 'calculus'],
+                replies: [
+                    "I can help with mathematical problems from basic arithmetic to advanced calculus, linear algebra, and statistics. What calculation or concept do you need help with?",
+                    "Mathematics is one of my core capabilities. I can work through equations, proofs, word problems, and explain mathematical concepts. What do you need?",
+                    "I'm well-equipped to handle mathematical tasks including symbolic manipulation, numerical computation, and explaining mathematical reasoning. What's your question?",
+                    "I can assist with various mathematical topics - from simple calculations to complex theoretical problems. What mathematical challenge can I help you with?"
+                ]
+            },
+            creative: {
+                patterns: ['write', 'story', 'poem', 'creative', 'imagine', 'describe', 'essay', 'article'],
+                replies: [
+                    "I enjoy creative tasks! I can help with storytelling, poetry, descriptive writing, essays, and more. What kind of creative content would you like to work on?",
+                    "Creative writing is something I can definitely assist with. Whether it's fiction, poetry, or explanatory content, I'm here to help. What's your idea?",
+                    "I'd be happy to help with creative writing! I can adapt to different styles and genres. What type of content are you looking to create?",
+                    "Creative tasks are one of my strengths. I can help generate ideas, draft content, or refine existing work. What are you working on?"
+                ]
+            },
+            image: {
+                patterns: ['image', 'picture', 'photo', 'visual', 'draw', 'create image', 'generate image'],
+                replies: [
+                    "While I can't directly generate images in this interface, I can help you describe what you want to create, provide detailed prompts for image generation tools, or analyze and discuss images you describe to me.",
+                    "I can assist with image-related tasks by helping you craft detailed descriptions, create prompts for image generation, or discuss visual concepts. What are you trying to achieve?",
+                    "For image creation, I can help you develop detailed descriptions and specifications. I can also help analyze or discuss visual concepts. What do you have in mind?",
+                    "I can help with the conceptual side of images - describing what you want, creating detailed prompts, or discussing visual composition. What's your image idea?"
+                ]
+            },
+            generic: {
+                patterns: ['tell me', 'explain', 'describe', 'what is', 'who is', 'where is', 'when is', 'why', 'how does', 'help me', 'assist'],
+                replies: [
+                    "I'd be happy to help! I can provide detailed explanations and break down complex topics. What would you like to know about?",
+                    "I can assist with that! My training covers a wide range of topics. What specific information or help do you need?",
+                    "Sure, I can help explain that. I aim to provide clear, comprehensive responses. What would you like to understand better?",
+                    "I'm here to help! I can provide information, explanations, and guidance on many topics. What's your question?"
+                ]
+            }
+        };
+
+        const fallbackResponses = [
+            "That's an interesting question! I can help you explore this topic in depth. Let me provide a thorough response based on my training.",
+            "I understand what you're asking. My training enables me to tackle complex queries like this from multiple angles. Here's my analysis:",
+            "Great question! This is exactly the kind of problem I'm designed to help with. Let me break this down for you.",
+            "I can definitely assist with that. My broad training allows me to provide comprehensive insights on this topic.",
+            "Interesting query! I'm equipped to handle this type of question. Let me give you a detailed response.",
+            "I'm well-suited to help with this. My training across diverse domains helps me understand the nuances here.",
+            "That's within my capabilities. I can provide a thorough, well-reasoned response to your question.",
+            "I can help you with this. Let me apply my reasoning capabilities to give you a useful answer."
+        ];
+
+        let chatStarted = false;
+
+        function findBestMatch(input) {
+            const lower = input.toLowerCase().trim();
+            
+            for (const [category, data] of Object.entries(responses)) {
+                for (const pattern of data.patterns) {
+                    if (lower.includes(pattern)) {
+                        return data.replies[Math.floor(Math.random() * data.replies.length)];
+                    }
+                }
+            }
+            
+            return fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+        }
+
+        function addMessage(text, isUser) {
+            if (!chatStarted) {
+                document.getElementById('welcomeSection').classList.add('hidden');
+                document.getElementById('chatArea').classList.add('active');
+                chatStarted = true;
+            }
+
+            const chatArea = document.getElementById('chatArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+            
+            messageDiv.innerHTML = `
+                <div class="message-avatar">
+                    ${isUser ? '👤' : '🤖'}
+                </div>
+                <div class="message-content">${text}</div>
+            `;
+            
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const chatArea = document.getElementById('chatArea');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message';
+            typingDiv.id = 'typing-indicator';
+            typingDiv.innerHTML = `
+                <div class="message-avatar">🤖</div>
+                <div class="message-content">
+                    <div class="typing-indicator">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                </div>
+            `;
+            chatArea.appendChild(typingDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addMessage(message, true);
+            input.value = '';
+            
+            showTypingIndicator();
+            
+            const delay = 600 + Math.random() * 600;
+            
+            setTimeout(() => {
+                removeTypingIndicator();
+                const response = findBestMatch(message);
+                addMessage(response, false);
+            }, delay);
+        }
+
+        function useSuggestion(text) {
+            document.getElementById('userInput').value = text;
+            sendMessage();
+        }
+
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
